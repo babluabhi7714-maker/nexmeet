@@ -80,9 +80,7 @@ function addVideo(id, name, stream, local = false) {
 		tile.setAttribute('aria-label', `Make ${local ? 'your' : name + "'s"} video the main view`);
 		const activateTile = () => {
 			if (pinnedParticipantId === id) return;
-			pinnedParticipantId = id;
-			$('auto-speaker-button').classList.remove('active');
-			$('auto-speaker-button').setAttribute('aria-pressed', 'false');
+			pinnedParticipantId = null;
 			activeSpeakerCandidate = null;
 			setActiveSpeaker(id);
 		};
@@ -96,7 +94,6 @@ function addVideo(id, name, stream, local = false) {
 		videoGrid.appendChild(tile);
 	}
 	const video = tile.querySelector('video');
-	video.muted = local;
 	video.autoplay = true;
 	video.playsInline = true;
 	video.setAttribute('playsinline', '');
@@ -104,6 +101,8 @@ function addVideo(id, name, stream, local = false) {
 	if (video.srcObject !== stream) video.srcObject = stream;
 	tile.classList.toggle('presentation-tile', id.startsWith('presentation-'));
 	applyAudioOutputPreference(video);
+	setupAudioAnalyser(id, video, stream, local);
+	video.muted = local;
 	const playPreview = () => video.play().catch(() => {
 		if (!local) showMeetingError('Click anywhere in the meeting to enable participant audio.');
 	});
@@ -117,12 +116,13 @@ function addVideo(id, name, stream, local = false) {
 	video.onresize = refreshTileVideo;
 	playPreview();
 	updateBadges(id);
-	setupAudioAnalyser(id, video, stream, local);
 	updateCount();
+	applyDynamicVideoGridLayout();
 }
 
 function setupAudioAnalyser(id, video, stream, local) {
-	if (audioAnalyzers.has(id) || !stream?.getAudioTracks?.().length) return;
+	if (audioAnalyzers.has(id)) return true;
+	if (!stream?.getAudioTracks?.().length) return false;
 	try {
 		audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
 		if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
@@ -136,8 +136,10 @@ function setupAudioAnalyser(id, video, stream, local) {
 			window.activeSpeakerLoopStarted = true;
 			requestAnimationFrame(updateActiveSpeaker);
 		}
+		return true;
 	} catch {
 		showMeetingToast('Active speaker detection is unavailable in this browser.', 'error');
+		return false;
 	}
 }
 
@@ -157,41 +159,30 @@ function chooseFallbackSpeaker(excludedId = null) {
 
 function setActiveSpeaker(id) {
 	const tiles = [...videoGrid.querySelectorAll('.video-tile')];
-	const loneSelfTile = tiles.length === 1 && tiles[0].classList.contains('local-tile') && !tiles[0].classList.contains('presentation-tile') ? tiles[0] : null;
 	if (id) {
 		const selectedTile = tiles.find((tile) => tile.id === `tile-${id}`);
 		if (!selectedTile) id = chooseFallbackSpeaker(id);
+	}
+	if (!id || !id.startsWith('presentation-')) {
+		if (id && activeSpeakerId !== id) activeSpeakerLastSwitch = performance.now();
+		activeSpeakerId = id || null;
+		videoGrid.classList.remove('active-speaker-mode');
+		tiles.forEach((tile) => {
+			tile.classList.remove('main-speaker', 'speaker-thumbnail', 'self-preview');
+			tile.classList.toggle('active-speaker', tile.id === `tile-${id}`);
+			videoGrid.appendChild(tile);
+		});
+		speakerLayout.classList.add('hidden');
+		applyDynamicVideoGridLayout();
+		return;
 	}
 	const destinationForTile = (tile) => tile.id === `tile-${id}`
 		? speakerStage
 		: tile.classList.contains('local-tile') && !tile.classList.contains('presentation-tile')
 			? selfPreviewLayer
 			: participantRail;
-	const layoutIsCurrent = id
-		? tiles.every((tile) => tile.parentElement === destinationForTile(tile))
-		: loneSelfTile
-			? loneSelfTile.parentElement === selfPreviewLayer
-			: tiles.every((tile) => tile.parentElement === videoGrid);
+	const layoutIsCurrent = tiles.every((tile) => tile.parentElement === destinationForTile(tile));
 	if (activeSpeakerId === id && layoutIsCurrent) return;
-	if (!id && loneSelfTile) {
-		activeSpeakerId = null;
-		videoGrid.classList.add('active-speaker-mode');
-		loneSelfTile.classList.remove('main-speaker', 'active-speaker');
-		loneSelfTile.classList.add('speaker-thumbnail', 'self-preview');
-		selfPreviewLayer.appendChild(loneSelfTile);
-		speakerLayout.classList.remove('hidden');
-		return;
-	}
-	if (tiles.length < 2 || !id) {
-		activeSpeakerId = null;
-		videoGrid.classList.remove('active-speaker-mode');
-		tiles.forEach((tile) => {
-			tile.classList.remove('main-speaker', 'speaker-thumbnail', 'self-preview', 'active-speaker');
-			videoGrid.appendChild(tile);
-		});
-		speakerLayout.classList.add('hidden');
-		return;
-	}
 	if (activeSpeakerId !== id) {
 		activeSpeakerId = id;
 		activeSpeakerLastSwitch = performance.now();
@@ -208,6 +199,16 @@ function setActiveSpeaker(id) {
 	speakerLayout.classList.remove('hidden');
 }
 
+function getMicrophoneLevel(entry) {
+	entry.analyser.getByteTimeDomainData(entry.data);
+	let energy = 0;
+	for (const value of entry.data) {
+		const normalized = (value - 128) / 128;
+		energy += normalized * normalized;
+	}
+	return Math.sqrt(energy / entry.data.length);
+}
+
 function updateActiveSpeaker() {
 	if (screenStream && document.getElementById(`tile-presentation-${socket.id}`)) {
 		pinnedParticipantId = `presentation-${socket.id}`;
@@ -217,41 +218,52 @@ function updateActiveSpeaker() {
 		if (remotePresentationId && document.getElementById(`tile-presentation-${remotePresentationId}`)) {
 			pinnedParticipantId = `presentation-${remotePresentationId}`;
 			setActiveSpeaker(pinnedParticipantId);
-		} else if (pinnedParticipantId && document.getElementById(`tile-${pinnedParticipantId}`)) {
-			setActiveSpeaker(pinnedParticipantId);
 		} else if (!screenStream && audioAnalyzers.size && participants.size > 1) {
-			if (!activeSpeakerId) setActiveSpeaker(chooseFallbackSpeaker());
 			let loudestId = null;
 			let loudestLevel = 0;
 			for (const [id, entry] of audioAnalyzers) {
 				if (id.startsWith('presentation-')) continue;
+				const participant = participants.get(id);
+				const microphoneTrack = entry.stream.getAudioTracks()[0];
+				if (participant?.mediaState?.audioMuted || !microphoneTrack?.enabled || microphoneTrack.readyState !== 'live') continue;
 				if (!document.getElementById(`tile-${id}`)) continue;
-				entry.analyser.getByteTimeDomainData(entry.data);
-				let sum = 0;
-				for (const value of entry.data) { const normalized = (value - 128) / 128; sum += normalized * normalized; }
-				const level = Math.sqrt(sum / entry.data.length);
+				const level = getMicrophoneLevel(entry);
 				if (level > loudestLevel) { loudestLevel = level; loudestId = id; }
 			}
 			const now = performance.now();
 			const currentLevel = activeSpeakerId ? (() => {
 				const current = audioAnalyzers.get(activeSpeakerId);
-				if (!current) return 0;
-				current.analyser.getByteTimeDomainData(current.data);
-				let sum = 0;
-				for (const value of current.data) { const normalized = (value - 128) / 128; sum += normalized * normalized; }
-				return Math.sqrt(sum / current.data.length);
+				const participant = participants.get(activeSpeakerId);
+				const microphoneTrack = current?.stream.getAudioTracks()[0];
+				if (!current || participant?.mediaState?.audioMuted || !microphoneTrack?.enabled || microphoneTrack.readyState !== 'live') return 0;
+				return getMicrophoneLevel(current);
 			})() : 0;
-			if (loudestId && loudestLevel > 0.032) {
+
+			if (!activeSpeakerId && loudestId && loudestLevel > 0.06) {
+				activeSpeakerCandidate = loudestId;
+				activeSpeakerCandidateSince = now;
+				setActiveSpeaker(loudestId);
+				activeSpeakerLastHeard = now;
+				return requestAnimationFrame(updateActiveSpeaker);
+			}
+
+			if (loudestId && loudestLevel > 0.06) {
 				activeSpeakerLastHeard = now;
 				if (activeSpeakerId === loudestId) {
 					activeSpeakerCandidate = null;
-				} else if (loudestLevel > currentLevel + 0.012 || !activeSpeakerId) {
-					if (activeSpeakerCandidate !== loudestId) { activeSpeakerCandidate = loudestId; activeSpeakerCandidateSince = now; }
-					if (now - activeSpeakerCandidateSince > 650 && now - activeSpeakerLastSwitch > 1000) setActiveSpeaker(loudestId);
+				} else if (loudestLevel > currentLevel + 0.015) {
+					if (activeSpeakerCandidate !== loudestId) {
+						activeSpeakerCandidate = loudestId;
+						activeSpeakerCandidateSince = now;
+					}
+					if (now - activeSpeakerCandidateSince > 350 && now - activeSpeakerLastSwitch > 1000) {
+						setActiveSpeaker(loudestId);
+						activeSpeakerCandidate = null;
+					}
 				}
-			} else if (activeSpeakerId && now - activeSpeakerLastHeard > 3200) {
+			} else if (activeSpeakerId && now - activeSpeakerLastHeard > 2200) {
 				activeSpeakerCandidate = null;
-				setActiveSpeaker(chooseFallbackSpeaker());
+				// Keep the current speaker when no one is talking to avoid flicker and noisy fallback switching.
 			}
 		} else if (activeSpeakerId && participants.size <= 1) {
 			setActiveSpeaker(null);
@@ -313,9 +325,47 @@ function publishMediaState() {
 	socket.emit('media-state', { audioMuted, videoMuted });
 }
 
+function applyDynamicVideoGridLayout() {
+	if (!videoGrid || videoGrid.classList.contains('active-speaker-mode')) return;
+	const visibleTiles = [...videoGrid.querySelectorAll('.video-tile')].filter((tile) => tile.offsetParent !== null && !tile.classList.contains('presentation-tile'));
+	const count = Math.max(visibleTiles.length, 1);
+	let columns = 1;
+	if (count === 2) columns = 2;
+	else if (count >= 3 && count <= 4) columns = 2;
+	else if (count >= 5 && count <= 6) columns = 3;
+	else if (count >= 7) columns = Math.min(4, Math.ceil(Math.sqrt(count)));
+	const rows = Math.ceil(count / columns);
+	const gap = 10;
+	const availableWidth = videoGrid.clientWidth || 960;
+	const availableHeight = videoGrid.clientHeight || 540;
+	const columnWidth = (availableWidth - gap * (columns - 1)) / columns;
+	const rowSpace = (availableHeight - gap * (rows - 1)) / rows;
+	const minTileHeight = Math.min(window.innerWidth <= 520 ? 82 : window.innerWidth <= 900 ? 104 : 120, columnWidth * 9 / 16);
+	const tileHeight = Math.floor(Math.min(columnWidth * 9 / 16, rowSpace));
+	const needsScroll = tileHeight < minTileHeight;
+	const finalTileHeight = needsScroll ? minTileHeight : tileHeight;
+	const finalTileWidth = Math.floor(finalTileHeight * 16 / 9);
+	videoGrid.style.setProperty('--grid-columns', columns);
+	videoGrid.style.setProperty('--grid-rows', rows);
+	videoGrid.style.gridTemplateColumns = `repeat(${columns}, ${finalTileWidth}px)`;
+	videoGrid.style.gridTemplateRows = `repeat(${rows}, ${finalTileHeight}px)`;
+	videoGrid.style.alignContent = needsScroll ? 'start' : 'center';
+	videoGrid.style.justifyContent = 'center';
+	videoGrid.style.overflowY = needsScroll ? 'auto' : 'hidden';
+	videoGrid.querySelectorAll('.video-tile').forEach((tile) => {
+		tile.style.width = `${finalTileWidth}px`;
+		tile.style.minHeight = `${finalTileHeight}px`;
+		tile.style.height = `${finalTileHeight}px`;
+	});
+}
+
+window.addEventListener('resize', applyDynamicVideoGridLayout);
+document.addEventListener('fullscreenchange', applyDynamicVideoGridLayout);
+
 function updateCount() {
 	$('participant-count').textContent = participants.size || videoGrid.querySelectorAll('.video-tile').length;
 	if (activeSpeakerId) setActiveSpeaker(activeSpeakerId);
+	applyDynamicVideoGridLayout();
 }
 
 function showRemotePresentation(id) {
@@ -608,6 +658,7 @@ function removePeer(id) {
 	if (pinnedParticipantId === id || pinnedParticipantId === presentationId) pinnedParticipantId = null;
 	if (activeSpeakerId === id || activeSpeakerId === presentationId) setActiveSpeaker(chooseFallbackSpeaker(id));
 	updateCount();
+	applyDynamicVideoGridLayout();
 }
 
 async function detectPreferredAudioDevices() {
@@ -654,6 +705,34 @@ function updateHeadphoneStatus(outputDevices) {
 	} else {
 		statusDiv.classList.add('hidden');
 	}
+}
+
+function syncAudioOutputSelects(selectedValue = '') {
+	const selects = [$('audioOutputSelect'), $('settings-output-select')].filter(Boolean);
+	if (!selects.length) return;
+	selects.forEach((select) => {
+		const currentValue = selectedValue || select.value || '';
+		if (currentValue && !Array.from(select.options).some((option) => option.value === currentValue)) {
+			select.value = '';
+			return;
+		}
+		select.value = currentValue || '';
+	});
+}
+
+function updateMediaControlsUI() {
+	const micTrack = localStream?.getAudioTracks()[0];
+	const videoTrack = localStream?.getVideoTracks()[0];
+	const micEnabled = Boolean(micTrack && micTrack.enabled);
+	const cameraEnabled = Boolean(videoTrack && videoTrack.enabled);
+	$('mic-button')?.classList.toggle('muted', !micEnabled);
+	$('settings-mic-toggle') && ($('settings-mic-toggle').checked = micEnabled);
+	const micLabel = document.querySelector('#mic-button small');
+	if (micLabel) micLabel.textContent = micEnabled ? 'Microphone' : 'Unmute';
+	$('camera-button')?.classList.toggle('muted', !cameraEnabled);
+	$('settings-camera-toggle') && ($('settings-camera-toggle').checked = cameraEnabled);
+	const cameraLabel = document.querySelector('#camera-button small');
+	if (cameraLabel) cameraLabel.textContent = cameraEnabled ? 'Camera' : 'Video off';
 }
 
 async function monitorAudioDevices() {
@@ -708,6 +787,7 @@ async function startMeeting(event) {
 		localTileId = socket.id || 'local';
 		participants.set(socket.id, { name: displayName, isHost: false, role: 'participant', mediaState: { audioMuted: false, videoMuted: false } });
 		addVideo(localTileId, displayName, localStream, true);
+		updateMediaControlsUI();
 		setActiveSpeaker(null);
 		$('room-title').textContent = currentRoom;
 		$('copy-link-button').title = meetingLink();
@@ -968,6 +1048,7 @@ $('mic-button').addEventListener('click', () => {
 	track.enabled = !track.enabled;
 	$('mic-button').classList.toggle('muted', !track.enabled);
 	document.querySelector('#mic-button small').textContent = track.enabled ? 'Mute' : 'Unmute';
+	$('settings-mic-toggle').checked = track.enabled;
 	publishMediaState();
 });
 $('camera-button').addEventListener('click', () => {
@@ -976,6 +1057,7 @@ $('camera-button').addEventListener('click', () => {
 	track.enabled = !track.enabled;
 	$('camera-button').classList.toggle('muted', !track.enabled);
 	document.querySelector('#camera-button small').textContent = track.enabled ? 'Camera' : 'Video off';
+	$('settings-camera-toggle').checked = track.enabled;
 	publishMediaState();
 });
 $('switch-camera-button').addEventListener('click', async () => {
@@ -1112,16 +1194,6 @@ $('people-button').addEventListener('click', () => {
 	const shouldOpen = $('host-panel').classList.contains('hidden');
 	setHostPanelOpen(shouldOpen);
 });
-$('auto-speaker-button').addEventListener('click', () => {
-	pinnedParticipantId = null;
-	activeSpeakerCandidate = null;
-	activeSpeakerLastHeard = performance.now();
-	activeSpeakerLastSwitch = 0;
-	$('auto-speaker-button').classList.add('active');
-	$('auto-speaker-button').setAttribute('aria-pressed', 'true');
-	const speakerId = chooseFallbackSpeaker();
-	if (speakerId) setActiveSpeaker(speakerId);
-});
 $('close-chat').addEventListener('click', () => setChatPanelOpen(false));
 $('close-host').addEventListener('click', () => setHostPanelOpen(false));
 $('file-button').addEventListener('click', () => {
@@ -1218,6 +1290,11 @@ function updateNameBadge(newName) {
 const fullscreenButton = $('fullscreenBtn');
 fullscreenButton?.addEventListener('click', async () => {
 		try {
+			setChatPanelOpen(false);
+			setHostPanelOpen(false);
+			setFilePanelOpen(false);
+			setUtilityPanelOpen(false);
+			$('reaction-picker').classList.add('hidden');
 			if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
 			else await document.exitFullscreen();
 		} catch { showMeetingError('Fullscreen is not available in this browser.'); }
@@ -1256,24 +1333,112 @@ $('audio-button').addEventListener('click', () => {
 });
 
 async function getAudioDevices() {
-		const select = $('audioOutputSelect');
-		if (!select || !navigator.mediaDevices?.enumerateDevices) return;
+		const outputSelects = [$('audioOutputSelect'), $('settings-output-select')].filter(Boolean);
+		const inputSelect = $('settings-input-select');
+		const cameraSelect = $('settings-camera-select');
+		if ((!outputSelects.length && !inputSelect && !cameraSelect) || !navigator.mediaDevices?.enumerateDevices) return;
 		try {
 			const devices = await navigator.mediaDevices.enumerateDevices();
-			select.replaceChildren(new Option('Default speaker', ''));
-			devices.filter((device) => device.kind === 'audiooutput').forEach((device, index) => {
-				select.appendChild(new Option(device.label || `Speaker ${index + 1}`, device.deviceId));
+			outputSelects.forEach((select) => {
+				const previousValue = select.value || '';
+				select.replaceChildren(new Option('Default speaker', ''));
+				devices.filter((device) => device.kind === 'audiooutput').forEach((device, index) => {
+					select.appendChild(new Option(device.label || `Speaker ${index + 1}`, device.deviceId));
+				});
+				select.value = previousValue && Array.from(select.options).some((option) => option.value === previousValue) ? previousValue : '';
 			});
+			const populateInput = (select, kind, label, activeDeviceId) => {
+				if (!select) return;
+				const previousValue = select.value || activeDeviceId || '';
+				select.replaceChildren(new Option(`Default ${label}`, ''));
+				devices.filter((device) => device.kind === kind).forEach((device, index) => {
+					select.appendChild(new Option(device.label || `${label} ${index + 1}`, device.deviceId));
+				});
+				select.value = Array.from(select.options).some((option) => option.value === previousValue) ? previousValue : '';
+			};
+			populateInput(inputSelect, 'audioinput', 'microphone', localStream?.getAudioTracks()[0]?.getSettings().deviceId);
+			populateInput(cameraSelect, 'videoinput', 'camera', localStream?.getVideoTracks()[0]?.getSettings().deviceId);
+			syncAudioOutputSelects(outputSelects[0]?.value || '');
 		} catch { showMeetingError('Could not read your speaker devices.'); }
 }
 $('audioOutputSelect').addEventListener('change', async (event) => {
 		const deviceId = event.target.value;
+		syncAudioOutputSelects(deviceId);
+		for (const media of document.querySelectorAll('audio, video')) {
+			if (typeof media.setSinkId === 'function') await media.setSinkId(deviceId).catch(() => {});
+		}
+		showMeetingError(deviceId ? 'Speaker changed.' : 'Using the default speaker.');
+});
+$('settings-output-select')?.addEventListener('change', async (event) => {
+		const deviceId = event.target.value;
+		syncAudioOutputSelects(deviceId);
 		for (const media of document.querySelectorAll('audio, video')) {
 			if (typeof media.setSinkId === 'function') await media.setSinkId(deviceId).catch(() => {});
 		}
 		showMeetingError(deviceId ? 'Speaker changed.' : 'Using the default speaker.');
 });
 $('refresh-audio-button').addEventListener('click', getAudioDevices);
+
+async function replaceLocalDeviceTrack(kind, deviceId) {
+	if (!localStream) return;
+	const oldTrack = localStream.getTracks().find((track) => track.kind === kind);
+	try {
+		const constraints = kind === 'audio'
+			? { audio: deviceId ? { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true } : true, video: false }
+			: { audio: false, video: deviceId ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } } : true };
+		const replacementStream = await navigator.mediaDevices.getUserMedia(constraints);
+		const replacementTrack = replacementStream.getTracks().find((track) => track.kind === kind);
+		if (!replacementTrack) throw new Error(`No ${kind} track was returned by the selected device.`);
+		replacementTrack.enabled = oldTrack?.enabled ?? true;
+		for (const peer of peers.values()) {
+			const sender = oldTrack
+				? peer.connection.getSenders().find((item) => item.track === oldTrack)
+				: kind === 'audio' ? peer.cameraAudioTransceiver?.sender : peer.cameraVideoTransceiver?.sender;
+			if (sender) await sender.replaceTrack(replacementTrack);
+		}
+		if (kind === 'audio') {
+			audioAnalyzers.get(localTileId)?.source.disconnect();
+			audioAnalyzers.delete(localTileId);
+		}
+		if (oldTrack) {
+			localStream.removeTrack(oldTrack);
+			oldTrack.stop();
+		}
+		localStream.addTrack(replacementTrack);
+		const localVideo = document.querySelector(`#tile-${localTileId} video`);
+		if (localVideo) localVideo.srcObject = null;
+		addVideo(localTileId, displayName, localStream, true);
+		updateMediaControlsUI();
+		publishMediaState();
+		showMeetingToast(`${kind === 'audio' ? 'Microphone' : 'Camera'} changed.`);
+	} catch (error) {
+		showMeetingToast(error.name === 'NotAllowedError' ? `Allow access to the selected ${kind} device.` : `Could not change the ${kind} device.`, 'error');
+		getAudioDevices();
+	}
+}
+
+$('settings-input-select')?.addEventListener('change', (event) => replaceLocalDeviceTrack('audio', event.target.value));
+$('settings-camera-select')?.addEventListener('change', (event) => replaceLocalDeviceTrack('video', event.target.value));
+
+$('settings-mic-toggle')?.addEventListener('change', () => {
+	const track = localStream?.getAudioTracks()[0];
+	if (!track) return;
+	track.enabled = $('settings-mic-toggle').checked;
+	const micLabel = document.querySelector('#mic-button small');
+	if (micLabel) micLabel.textContent = track.enabled ? 'Microphone' : 'Unmute';
+	$('mic-button')?.classList.toggle('muted', !track.enabled);
+	publishMediaState();
+});
+
+$('settings-camera-toggle')?.addEventListener('change', () => {
+	const track = localStream?.getVideoTracks()[0];
+	if (!track) return;
+	track.enabled = $('settings-camera-toggle').checked;
+	const cameraLabel = document.querySelector('#camera-button small');
+	if (cameraLabel) cameraLabel.textContent = track.enabled ? 'Camera' : 'Video off';
+	$('camera-button')?.classList.toggle('muted', !track.enabled);
+	publishMediaState();
+});
 
 $('video-effect-select').addEventListener('change', (event) => {
 		const effect = event.target.value;
@@ -1360,6 +1525,7 @@ $('settings-button').addEventListener('click', () => {
 	setUtilityPanelOpen(true);
 	$('settings-section').classList.remove('hidden');
 	$('utility-panel').classList.add('show-settings');
+	getAudioDevices();
 });
 $('close-settings').addEventListener('click', () => {
 	$('settings-section').classList.add('hidden');
