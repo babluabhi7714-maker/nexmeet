@@ -1,6 +1,7 @@
 const socket = io();
 const peers = new Map();
 const pendingPeerConnections = new Map();
+const remoteAudioPlayers = new Map();
 let localStream;
 let screenStream;
 let currentRoom;
@@ -38,6 +39,7 @@ let meetingDurationTimer = null;
 let captionRecognition;
 let captionRestartTimer = null;
 let captionsEnabled = false;
+let audioUnlockNotice;
 
 const $ = (id) => document.getElementById(id);
 const joinScreen = $('join-screen');
@@ -102,7 +104,7 @@ function addVideo(id, name, stream, local = false) {
 	tile.classList.toggle('presentation-tile', id.startsWith('presentation-'));
 	applyAudioOutputPreference(video);
 	setupAudioAnalyser(id, video, stream, local);
-	video.muted = local;
+	video.muted = true;
 	const playPreview = () => video.play().catch(() => {
 		if (!local) showMeetingError('Click anywhere in the meeting to enable participant audio.');
 	});
@@ -145,6 +147,56 @@ function setupAudioAnalyser(id, video, stream, local) {
 
 function resumeMeetingAudio() {
 	if (audioContext && audioContext.state !== 'running') audioContext.resume().catch(() => {});
+	for (const audio of remoteAudioPlayers.values()) {
+		if (audio.paused) audio.play().catch(showAudioUnlockNotice);
+	}
+}
+
+function showAudioUnlockNotice() {
+	if (audioUnlockNotice?.isConnected || !$('meeting-notifications')) return;
+	const notice = document.createElement('div');
+	notice.className = 'meeting-toast error audio-playback-prompt';
+	const message = document.createElement('span');
+	message.textContent = 'Your browser blocked participant audio.';
+	const button = document.createElement('button');
+	button.type = 'button';
+	button.textContent = 'Enable audio';
+	button.addEventListener('click', async () => {
+		const players = [...remoteAudioPlayers.values()];
+		const results = await Promise.all(players.map((audio) => audio.play().then(() => true, () => false)));
+		if (results.every(Boolean)) notice.remove();
+	});
+	notice.append(message, button);
+	$('meeting-notifications').appendChild(notice);
+	audioUnlockNotice = notice;
+}
+
+function playRemoteAudio(id, stream) {
+	let audio = remoteAudioPlayers.get(id);
+	if (!audio) {
+		audio = document.createElement('audio');
+		audio.className = 'remote-audio-player';
+		audio.autoplay = true;
+		audio.playsInline = true;
+		audio.setAttribute('aria-hidden', 'true');
+		audio.tabIndex = -1;
+		document.body.appendChild(audio);
+		remoteAudioPlayers.set(id, audio);
+	}
+	audio.muted = false;
+	audio.volume = 1;
+	if (audio.srcObject !== stream) audio.srcObject = stream;
+	applyAudioOutputPreference(audio);
+	audio.play().catch(showAudioUnlockNotice);
+}
+
+function removeRemoteAudio(id) {
+	remoteAudioPlayers.get(id)?.remove();
+	remoteAudioPlayers.delete(id);
+	if (!remoteAudioPlayers.size && audioUnlockNotice?.isConnected) {
+		audioUnlockNotice.remove();
+		audioUnlockNotice = null;
+	}
 }
 
 document.addEventListener('pointerdown', resumeMeetingAudio, { capture: true });
@@ -576,7 +628,9 @@ async function createPeerConnection(id, name, initiator) {
 	const screenAudioTransceiver = connection.addTransceiver('audio', { direction: 'sendrecv' });
 	const remoteStream = new MediaStream();
 	const remoteScreenStream = new MediaStream();
-	const peerState = { connection, name, cameraVideoTransceiver, cameraAudioTransceiver, screenVideoTransceiver, screenAudioTransceiver, screenVideoSender: screenVideoTransceiver.sender, screenAudioSender: screenAudioTransceiver.sender, remoteStream, remoteScreenStream };
+	const remoteAudioStream = new MediaStream();
+	const remoteScreenAudioStream = new MediaStream();
+	const peerState = { connection, name, cameraVideoTransceiver, cameraAudioTransceiver, screenVideoTransceiver, screenAudioTransceiver, screenVideoSender: screenVideoTransceiver.sender, screenAudioSender: screenAudioTransceiver.sender, remoteStream, remoteScreenStream, remoteAudioStream, remoteScreenAudioStream };
 	peers.set(id, peerState);
 	if (screenStream) {
 		const sharedVideo = screenStream.getVideoTracks()[0];
@@ -599,6 +653,13 @@ async function createPeerConnection(id, name, initiator) {
 		}
 		const stream = isScreenTrack ? remoteScreenStream : remoteStream;
 		if (!stream.getTracks().some((receivedTrack) => receivedTrack.id === track.id)) stream.addTrack(track);
+		if (track.kind === 'audio' && peer) {
+			const audioStream = isScreenTrack ? peer.remoteScreenAudioStream : peer.remoteAudioStream;
+			if (!audioStream.getTracks().some((receivedTrack) => receivedTrack.id === track.id)) audioStream.addTrack(track);
+			const audioId = isScreenTrack ? `presentation-${id}` : id;
+			playRemoteAudio(audioId, audioStream);
+			track.addEventListener('unmute', () => playRemoteAudio(audioId, audioStream));
+		}
 		const tileId = isScreenTrack ? `presentation-${id}` : id;
 		const tileName = isScreenTrack ? `${name}'s screen` : name;
 		if (isScreenTrack) {
@@ -652,8 +713,10 @@ function removePeer(id) {
 	if (peer) peer.connection.close();
 	peers.delete(id);
 	audioAnalyzers.delete(id);
+	removeRemoteAudio(id);
 	document.getElementById(`tile-${id}`)?.remove();
 	const presentationId = `presentation-${id}`;
+	removeRemoteAudio(presentationId);
 	document.getElementById(`tile-${presentationId}`)?.remove();
 	if (pinnedParticipantId === id || pinnedParticipantId === presentationId) pinnedParticipantId = null;
 	if (activeSpeakerId === id || activeSpeakerId === presentationId) setActiveSpeaker(chooseFallbackSpeaker(id));
@@ -847,6 +910,7 @@ socket.on('signal', async ({ sender, signal }) => {
 socket.on('presentation-stopped', ({ id }) => {
 	activePresentations.delete(id);
 	const presentationId = `presentation-${id}`;
+	removeRemoteAudio(presentationId);
 	document.getElementById(`tile-${presentationId}`)?.remove();
 	if (pinnedParticipantId === presentationId) pinnedParticipantId = null;
 	if (activeSpeakerId === presentationId) setActiveSpeaker(chooseFallbackSpeaker(presentationId));
