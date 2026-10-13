@@ -98,9 +98,9 @@
 					<button id="report-button" class="more-tile" type="button"><span class="more-icon">&#9888;</span><strong>Report abuse</strong></button>
 				</div>
 				<section id="settings-section" class="settings-section hidden" aria-label="Meeting settings">
-					<div class="settings-heading"><div><p class="eyebrow">MEETING SETTINGS</p><h3>Settings</h3></div><button id="close-settings" class="icon-button" type="button" aria-label="Back to more options">&#8592;</button></div>
+					<div class="settings-heading"><div><p class="eyebrow">MEETING SETTINGS</p><h3>Settings</h3></div><div class="settings-heading-actions"><button id="settings-fullscreen-button" class="secondary-button compact-button" type="button">Fullscreen</button><button id="close-settings" class="icon-button" type="button" aria-label="Back to more options">&#8592;</button></div></div>
 					<div class="settings-group"><h4>VIDEO</h4><label class="settings-option"><span><strong>Don't show video in tiles</strong><small>Watch only presentations</small></span><input id="hide-video-tiles-toggle" type="checkbox"><i></i></label></div>
-					<div class="settings-group"><h4>AUDIO &amp; VIDEO</h4>
+					<div id="settings-audio-video-group" class="settings-group"><h4>AUDIO &amp; VIDEO</h4>
 						<label class="settings-option"><span><strong>Microphone</strong><small>Turn your mic on or off</small></span><input id="settings-mic-toggle" type="checkbox" checked><i></i></label>
 						<div class="settings-select-wrap"><label for="settings-input-select">Microphone</label><select id="settings-input-select"><option value="">Default microphone</option></select></div>
 						<label class="settings-option"><span><strong>Camera</strong><small>Turn your camera on or off</small></span><input id="settings-camera-toggle" type="checkbox" checked><i></i></label>
@@ -109,9 +109,10 @@
 							<label for="settings-output-select">Speaker</label>
 							<select id="settings-output-select"><option value="">Default speaker</option></select>
 						</div>
+						<button id="refresh-audio-button" class="secondary-button compact-button" type="button">Refresh devices</button>
 					</div>
 					<div class="settings-group"><h4>GENERAL</h4><button id="settings-host-controls" class="settings-link" type="button"><span>Host controls</span><span>&#8250;</span></button><button id="settings-feedback" class="settings-link" type="button"><span>Send feedback</span><span>&#8250;</span></button></div>
-					<div class="settings-group"><h4>CAPTIONS</h4><label class="settings-option"><span><strong>Live captions</strong><small>Show captions in this call</small></span><input id="settings-captions-toggle" type="checkbox"><i></i></label><div class="settings-value"><span>Language of the call</span><strong>English (India)</strong></div></div>
+					<div class="settings-group"><h4>CAPTIONS</h4><label class="settings-option"><span><strong>Live captions</strong><small>Caption your speech; each speaker turns this on for their own voice</small></span><input id="settings-captions-toggle" type="checkbox"><i></i></label><div class="settings-value"><span>Language of the call</span><strong>English (India)</strong></div></div>
 					<div class="settings-group"><h4>REACTIONS</h4><label class="settings-option"><span><strong>Show reactions from others</strong><small>When off, your own reactions still appear</small></span><input id="show-reactions-toggle" type="checkbox" checked><i></i></label><label class="settings-option"><span><strong>Animation</strong><small>Show floating reaction animations</small></span><input id="reaction-animation-toggle" type="checkbox" checked><i></i></label></div>
 				</section>
 				<div class="more-secondary-actions">
@@ -122,7 +123,6 @@
 				</div>
 				<section class="utility-section"><h3>Invite people</h3><p class="panel-hint">Copy the meeting link or send an email invitation.</p><div class="invite-row"><input id="invite-email" type="email" placeholder="name@example.com" autocomplete="email"><button id="email-invite-button" type="button">Email</button></div><button id="copy-meeting-invite" class="secondary-button compact-button" type="button">Copy meeting link</button></section>
 				<section class="utility-section"><h3>Video effects</h3><label for="video-effect-select">Camera effect</label><select id="video-effect-select"><option value="none">None</option><option value="soft-blur">Soft blur</option><option value="dim">Dim</option><option value="contrast">High contrast</option></select></section>
-				<section class="utility-section"><h3>Audio</h3><label for="audioOutputSelect">Speaker</label><select id="audioOutputSelect"><option value="">Default speaker</option></select><button id="refresh-audio-button" class="secondary-button compact-button" type="button">Refresh devices</button></section>
 				<section id="report-section" class="utility-section hidden"><label for="report-text">What went wrong?</label><textarea id="report-text" rows="3" maxlength="500" placeholder="Tell us what happened"></textarea><button id="send-report-button" class="primary-button compact-button" type="button">Send report</button></section>
 			</aside>
 			<div id="reaction-picker" class="reaction-picker hidden" aria-label="Reactions"><button type="button" data-reaction="&#128077;">&#128077;</button><button type="button" data-reaction="&#10084;&#65039;">&#10084;&#65039;</button><button type="button" data-reaction="&#128514;">&#128514;</button><button type="button" data-reaction="&#128558;">&#128558;</button><button type="button" data-reaction="&#128546;">&#128546;</button><button type="button" data-reaction="&#128079;">&#128079;</button><button type="button" data-reaction="&#127881;">&#127881;</button></div>

@@ -235,17 +235,6 @@ body { background: var(--paper); }
 .join-card-heading .eyebrow { margin: 0 0 3px; font-size: 9px; }
 .join-card h2 { margin: 0; font-size: 24px; }
 .join-form { display: grid; gap: 7px; }
-.join-form label, .join-card label { margin: 4px 0 0; color: #46564d; font-size: 12px; font-weight: 700; }
-.join-form input, .join-card input:not([type="checkbox"]) {
-    width: 100%;
-    min-height: 44px;
-    padding: 0 12px;
-    border: 1px solid #d6e0d9;
-    border-radius: 5px;
-    background: #fbfdfb;
-    color: var(--ink);
-    outline: none;
-}
 .join-form input:focus, .join-card input:focus { border-color: #6c9674; box-shadow: 0 0 0 3px rgba(108, 150, 116, .14); }
 .primary-button {
     min-height: 46px;
@@ -531,3 +520,49 @@ body { background: var(--paper); }
     .meeting-duration { display: none; }
     .self-preview-layer { bottom: 96px; width: min(112px, 33%); }
 }
+
+.participant-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 148px;
+    align-items: center;
+    gap: 8px;
+    min-height: 48px;
+}
+.participant-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.participant-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 3px;
+    width: 148px;
+    min-width: 0;
+}
+.participant-row button {
+    min-height: 30px;
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 4px;
+    font-size: 8px;
+    white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+    .participant-row { grid-template-columns: minmax(0, 1fr) 140px; gap: 5px; padding: 8px; }
+    .participant-actions { gap: 3px; }
+    .participant-actions { width: 140px; }
+    .participant-row button { padding: 4px 2px; font-size: 8px; }
+}
+
+.settings-heading-actions { display: flex; align-items: center; gap: 8px; }
+.settings-heading-actions .compact-button { width: auto; min-height: 36px; padding: 6px 10px; }
+.meeting-screen .settings-heading-actions .secondary-button { background: #202825; border-color: #35413a; color: #edf2ef; }
+.meeting-screen .settings-heading-actions .secondary-button:hover { background: #2a3630; border-color: #506054; }
+.utility-panel.show-settings { overflow: hidden; }
+.utility-panel.show-settings .settings-section { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.utility-panel.show-settings .settings-heading { position: sticky; top: 0; z-index: 3; padding-top: 4px; background: #171d1b; }
+.meeting-screen .caption-display { z-index: 11; max-height: min(25vh, 200px); overflow-y: auto; white-space: pre-line; }

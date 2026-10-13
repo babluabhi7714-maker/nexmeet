@@ -485,23 +485,28 @@ function renderParticipants() {
 		const row = document.createElement('div');
 		row.className = 'participant-row';
 		const label = document.createElement('span');
+		label.className = 'participant-name';
 		const muteStatus = participant.mediaState?.audioMuted ? ' · 🔇' : '';
 		const videoStatus = participant.mediaState?.videoMuted ? ' · 📹' : '';
 		label.textContent = `${participant.name}${id === socket.id ? ' (You)' : ''}${participant.isHost ? ' · Host' : ''}${participant.role === 'presenter' ? ' · Presenter' : ''}${muteStatus}${videoStatus}`;
 		row.appendChild(label);
 		if (isHost && id !== socket.id && !participant.isHost) {
-			const actions = document.createElement('span');
+			const actions = document.createElement('div');
+			actions.className = 'participant-actions';
 			const mute = document.createElement('button');
 			mute.type = 'button';
 			mute.textContent = participant.mediaState?.audioMuted ? 'Unmute' : 'Mute';
 			mute.addEventListener('click', () => socket.emit('host-action', { action: 'mute', target: id }));
 			const presenter = document.createElement('button');
-			presenter.type = 'button'; presenter.textContent = participant.role === 'presenter' ? 'Revoke Presenter' : 'Make Presenter';
+			presenter.type = 'button';
+			presenter.textContent = participant.role === 'presenter' ? 'Revoke' : 'Present';
+			presenter.title = participant.role === 'presenter' ? 'Revoke presenter' : 'Make presenter';
 			presenter.addEventListener('click', () => socket.emit('host-action', { action: 'give-presenter', target: id }));
 			const remove = document.createElement('button');
 			remove.type = 'button'; remove.textContent = 'Remove';
 			remove.addEventListener('click', () => socket.emit('host-action', { action: 'remove', target: id }));
-			actions.append(mute, presenter, remove); row.appendChild(actions);
+			actions.append(mute, presenter, remove);
+			row.appendChild(actions);
 		}
 		list.appendChild(row);
 	}
@@ -771,7 +776,7 @@ function updateHeadphoneStatus(outputDevices) {
 }
 
 function syncAudioOutputSelects(selectedValue = '') {
-	const selects = [$('audioOutputSelect'), $('settings-output-select')].filter(Boolean);
+	const selects = [$('settings-output-select')].filter(Boolean);
 	if (!selects.length) return;
 	selects.forEach((select) => {
 		const currentValue = selectedValue || select.value || '';
@@ -1352,17 +1357,19 @@ function updateNameBadge(newName) {
 }
 
 const fullscreenButton = $('fullscreenBtn');
-fullscreenButton?.addEventListener('click', async () => {
-		try {
-			setChatPanelOpen(false);
-			setHostPanelOpen(false);
-			setFilePanelOpen(false);
-			setUtilityPanelOpen(false);
-			$('reaction-picker').classList.add('hidden');
-			if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
-			else await document.exitFullscreen();
-		} catch { showMeetingError('Fullscreen is not available in this browser.'); }
-});
+async function toggleMeetingFullscreen() {
+	try {
+		setChatPanelOpen(false);
+		setHostPanelOpen(false);
+		setFilePanelOpen(false);
+		setUtilityPanelOpen(false);
+		$('reaction-picker').classList.add('hidden');
+		if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+		else await document.exitFullscreen();
+	} catch { showMeetingError('Fullscreen is not available in this browser.'); }
+}
+fullscreenButton?.addEventListener('click', toggleMeetingFullscreen);
+$('settings-fullscreen-button')?.addEventListener('click', toggleMeetingFullscreen);
 
 const utilityPanel = $('utility-panel');
 function setUtilityPanelOpen(isOpen) {
@@ -1372,6 +1379,18 @@ function setUtilityPanelOpen(isOpen) {
 		$('host-panel').classList.add('hidden');
 		$('file-panel').classList.add('hidden');
 	}
+}
+function openSettingsPanel(focusId) {
+	setUtilityPanelOpen(true);
+	$('settings-section').classList.remove('hidden');
+	utilityPanel.classList.add('show-settings');
+	const focusTarget = () => requestAnimationFrame(() => {
+		const target = $(focusId);
+		target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+		target?.focus();
+	});
+	if (focusId) Promise.resolve(getAudioDevices()).finally(focusTarget);
+	else getAudioDevices();
 }
 $('more-button').addEventListener('click', () => setUtilityPanelOpen(utilityPanel.classList.contains('hidden')));
 $('close-utility').addEventListener('click', () => setUtilityPanelOpen(false));
@@ -1392,12 +1411,11 @@ $('captions-button').addEventListener('click', () => {
 	captions.dispatchEvent(new Event('change'));
 });
 $('audio-button').addEventListener('click', () => {
-	$('audioOutputSelect').scrollIntoView({ block: 'center', behavior: 'smooth' });
-	$('audioOutputSelect').focus();
+	openSettingsPanel('settings-output-select');
 });
 
 async function getAudioDevices() {
-		const outputSelects = [$('audioOutputSelect'), $('settings-output-select')].filter(Boolean);
+		const outputSelects = [$('settings-output-select')].filter(Boolean);
 		const inputSelect = $('settings-input-select');
 		const cameraSelect = $('settings-camera-select');
 		if ((!outputSelects.length && !inputSelect && !cameraSelect) || !navigator.mediaDevices?.enumerateDevices) return;
@@ -1425,14 +1443,6 @@ async function getAudioDevices() {
 			syncAudioOutputSelects(outputSelects[0]?.value || '');
 		} catch { showMeetingError('Could not read your speaker devices.'); }
 }
-$('audioOutputSelect').addEventListener('change', async (event) => {
-		const deviceId = event.target.value;
-		syncAudioOutputSelects(deviceId);
-		for (const media of document.querySelectorAll('audio, video')) {
-			if (typeof media.setSinkId === 'function') await media.setSinkId(deviceId).catch(() => {});
-		}
-		showMeetingError(deviceId ? 'Speaker changed.' : 'Using the default speaker.');
-});
 $('settings-output-select')?.addEventListener('change', async (event) => {
 		const deviceId = event.target.value;
 		syncAudioOutputSelects(deviceId);
@@ -1514,9 +1524,11 @@ $('video-effect-select').addEventListener('change', (event) => {
 
 let localCaptionText = '';
 const remoteCaptionTranscripts = new Map();
+const remoteCaptionTimers = new Map();
+let localCaptionTimer = null;
 
 function renderCaptionDisplay() {
-	const lines = [...remoteCaptionTranscripts.values()];
+	const lines = [...remoteCaptionTranscripts.values()].map((caption) => `${caption.name}: ${caption.text}`);
 	if (localCaptionText) lines.push(`You: ${localCaptionText}`);
 	$('caption-display').textContent = lines.join('\n');
 	$('caption-display').classList.toggle('hidden', lines.length === 0);
@@ -1524,8 +1536,18 @@ function renderCaptionDisplay() {
 
 socket.on('caption', ({ id, name, text, active }) => {
 	if (id === socket.id) return;
-	if (active && text) remoteCaptionTranscripts.set(id, `${name || 'Participant'}: ${text}`);
-	else remoteCaptionTranscripts.delete(id);
+	window.clearTimeout(remoteCaptionTimers.get(id));
+	if (active && text) {
+		remoteCaptionTranscripts.set(id, { name: name || 'Participant', text });
+		remoteCaptionTimers.set(id, window.setTimeout(() => {
+			remoteCaptionTranscripts.delete(id);
+			remoteCaptionTimers.delete(id);
+			renderCaptionDisplay();
+		}, 5000));
+	} else {
+		remoteCaptionTranscripts.delete(id);
+		remoteCaptionTimers.delete(id);
+	}
 	renderCaptionDisplay();
 });
 
@@ -1535,6 +1557,8 @@ function stopLiveCaptions() {
 	captionRestartTimer = null;
 	const recognition = captionRecognition;
 	captionRecognition = null;
+	window.clearTimeout(localCaptionTimer);
+	localCaptionTimer = null;
 	localCaptionText = '';
 	renderCaptionDisplay();
 	if (socket.connected) socket.emit('caption', { active: false, text: '' });
@@ -1549,9 +1573,16 @@ function startCaptionRecognition(Recognition) {
 	recognition.interimResults = true;
 	recognition.lang = navigator.language || 'en-IN';
 	recognition.onresult = (resultEvent) => {
-		localCaptionText = [...resultEvent.results].map((result) => result[0].transcript).join(' ').trim();
+		localCaptionText = [...resultEvent.results].slice(resultEvent.resultIndex).map((result) => result[0].transcript).join(' ').trim();
+		if (!localCaptionText) return;
 		renderCaptionDisplay();
 		if (localCaptionText && socket.connected) socket.emit('caption', { active: true, text: localCaptionText });
+		window.clearTimeout(localCaptionTimer);
+		localCaptionTimer = window.setTimeout(() => {
+			localCaptionText = '';
+			renderCaptionDisplay();
+			if (socket.connected) socket.emit('caption', { active: false, text: '' });
+		}, 5000);
 	};
 	recognition.onerror = (event) => {
 		if (!['not-allowed', 'service-not-allowed', 'audio-capture'].includes(event.error)) return;
@@ -1586,10 +1617,7 @@ $('email-invite-button').addEventListener('click', () => {
 	window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
 });
 $('settings-button').addEventListener('click', () => {
-	setUtilityPanelOpen(true);
-	$('settings-section').classList.remove('hidden');
-	$('utility-panel').classList.add('show-settings');
-	getAudioDevices();
+	openSettingsPanel();
 });
 $('close-settings').addEventListener('click', () => {
 	$('settings-section').classList.add('hidden');
