@@ -1551,6 +1551,17 @@ socket.on('caption', ({ id, name, text, active }) => {
 	renderCaptionDisplay();
 });
 
+async function ensureCaptionMicrophoneAccess() {
+	if (!navigator.mediaDevices?.getUserMedia) return false;
+	try {
+		const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+		stream.getTracks().forEach((track) => track.stop());
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function stopLiveCaptions() {
 	captionsEnabled = false;
 	window.clearTimeout(captionRestartTimer);
@@ -1623,7 +1634,7 @@ $('close-settings').addEventListener('click', () => {
 	$('settings-section').classList.add('hidden');
 	$('utility-panel').classList.remove('show-settings');
 });
-$('settings-captions-toggle').addEventListener('change', (event) => {
+$('settings-captions-toggle').addEventListener('change', async (event) => {
 	const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 	if (!event.target.checked) {
 		stopLiveCaptions();
@@ -1632,6 +1643,12 @@ $('settings-captions-toggle').addEventListener('change', (event) => {
 	if (!Recognition) {
 		event.target.checked = false;
 		showMeetingToast('Live captions are unavailable in this browser. Try Chrome or Edge.', 'error');
+		return;
+	}
+	const micReady = await ensureCaptionMicrophoneAccess();
+	if (!micReady) {
+		event.target.checked = false;
+		showMeetingToast('Allow microphone access to use live captions.', 'error');
 		return;
 	}
 	captionsEnabled = true;

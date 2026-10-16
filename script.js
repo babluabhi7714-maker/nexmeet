@@ -844,9 +844,15 @@ function setUtilityPanelOpen(isOpen) {
 $('more-button').addEventListener('click', () => setUtilityPanelOpen(utilityPanel.classList.contains('hidden')));
 $('close-utility').addEventListener('click', () => setUtilityPanelOpen(false));
 $('more-captions-button').addEventListener('click', () => $('captions-button').click());
-$('more-audio-button').addEventListener('click', () => {
+
+$('more-audio-button').addEventListener('click', async () => {
 	setUtilityPanelOpen(true);
-	$('microphone-input-select')?.focus();
+	try {
+		await Promise.all([getAudioDevices(), populateDeviceSettings()]);
+		$('microphone-input-select')?.focus();
+	} catch {
+		showMeetingToast('Could not load your audio and video devices.', 'error');
+	}
 });
 $('top-share-button')?.addEventListener('click', () => $('share-button').click());
 $('more-chat-button').addEventListener('click', () => { setUtilityPanelOpen(false); setChatPanelOpen(true); });
