@@ -1445,11 +1445,22 @@ async function getAudioDevices() {
 }
 $('settings-output-select')?.addEventListener('change', async (event) => {
 		const deviceId = event.target.value;
-		syncAudioOutputSelects(deviceId);
-		for (const media of document.querySelectorAll('audio, video')) {
-			if (typeof media.setSinkId === 'function') await media.setSinkId(deviceId).catch(() => {});
+		const mediaElements = [...document.querySelectorAll('audio, video')];
+		const supportedMedia = mediaElements.filter((media) => typeof media.setSinkId === 'function');
+		if (mediaElements.length && !supportedMedia.length) {
+			showMeetingToast('Speaker selection is not supported by this browser.', 'error');
+			return;
 		}
-		showMeetingError(deviceId ? 'Speaker changed.' : 'Using the default speaker.');
+		try {
+			await Promise.all(supportedMedia.map((media) => media.setSinkId(deviceId)));
+			preferredAudioOutputId = deviceId || null;
+			syncAudioOutputSelects(deviceId);
+			showMeetingToast(deviceId ? 'Speaker changed.' : 'Using the default speaker.');
+		} catch {
+			event.target.value = preferredAudioOutputId || '';
+			syncAudioOutputSelects(preferredAudioOutputId || '');
+			showMeetingToast('Could not switch speakers. Check device access and try again.', 'error');
+		}
 });
 $('refresh-audio-button').addEventListener('click', getAudioDevices);
 
