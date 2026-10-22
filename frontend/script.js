@@ -2,6 +2,7 @@ const socket = io();
 const peers = new Map();
 const pendingPeerConnections = new Map();
 const remoteAudioPlayers = new Map();
+const processedMicrophoneTracks = new WeakMap();
 let localStream;
 let screenStream;
 let currentRoom;
@@ -16,14 +17,16 @@ const participants = new Map();
 const activePresentations = new Set();
 let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
 let pendingQueue = [];
-let preferredAudioInputId = null;
 let preferredAudioOutputId = null;
-let currentConnectionState = 'new';
-let iceRestartInProgress = false;
 let isHeadphonesConnected = false;
 let cameraFacingMode = 'user';
 const raisedHandNotifications = new Map();
 const audioAnalyzers = new Map();
+let reconnectToken;
+let roomJoinRequested = false;
+let lastJoinedSocketId = null;
+let peerGeneration = 0;
+let turnConfigurationWarningShown = false;
 let audioContext;
 let activeSpeakerId = null;
 let pinnedParticipantId = null;
@@ -34,6 +37,7 @@ let activeSpeakerLastSwitch = 0;
 let hideVideoTiles = false;
 let showOtherReactions = true;
 let animateReactions = true;
+let reactionSequence = 0;
 let meetingStartedAt = null;
 let meetingDurationTimer = null;
 let captionRecognition;
@@ -50,6 +54,140 @@ const speakerLayout = $('speaker-layout');
 const speakerStage = $('speaker-stage');
 const participantRail = $('participant-rail');
 const selfPreviewLayer = $('self-preview-layer');
+
+const microphoneConstraints = {
+	echoCancellation: true,
+	noiseSuppression: true,
+	autoGainControl: true,
+};
+
+function releaseProcessedMicrophoneTrack(track) {
+	const processing = processedMicrophoneTracks.get(track);
+	if (!processing) return;
+	processing.source.disconnect();
+	processing.highPass.disconnect();
+	processing.compressor.disconnect();
+	processing.gain.disconnect();
+	processing.limiter.disconnect();
+	processing.output.stop();
+	processedMicrophoneTracks.delete(track);
+}
+
+async function getOutgoingMicrophoneTrack(track) {
+	if (!track) return null;
+	const existing = processedMicrophoneTracks.get(track);
+	if (existing) return existing.output;
+	const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+	if (!AudioContextConstructor) return track;
+	try {
+		audioContext ||= new AudioContextConstructor();
+		if (audioContext.state !== 'running') await audioContext.resume();
+		const source = audioContext.createMediaStreamSource(new MediaStream([track]));
+		const highPass = audioContext.createBiquadFilter();
+		highPass.type = 'highpass';
+		highPass.frequency.value = 100;
+		highPass.Q.value = 0.7;
+		const compressor = audioContext.createDynamicsCompressor();
+		compressor.threshold.value = -30;
+		compressor.knee.value = 12;
+		compressor.ratio.value = 4;
+		compressor.attack.value = 0.003;
+		compressor.release.value = 0.25;
+		const gain = audioContext.createGain();
+		gain.gain.value = 1.8;
+		const limiter = audioContext.createDynamicsCompressor();
+		limiter.threshold.value = -3;
+		limiter.knee.value = 0;
+		limiter.ratio.value = 20;
+		limiter.attack.value = 0.001;
+		limiter.release.value = 0.1;
+		const destination = audioContext.createMediaStreamDestination();
+		source.connect(highPass);
+		highPass.connect(compressor);
+		compressor.connect(gain);
+		gain.connect(limiter);
+		limiter.connect(destination);
+		const output = destination.stream.getAudioTracks()[0];
+		if (!output) throw new Error('Audio processing did not produce a microphone track.');
+		processedMicrophoneTracks.set(track, { source, highPass, compressor, gain, limiter, output });
+		track.addEventListener('ended', () => releaseProcessedMicrophoneTrack(track), { once: true });
+		return output;
+	} catch {
+		showMeetingToast('Voice enhancement is unavailable; using your microphone directly.', 'error');
+		return track;
+	}
+}
+
+function getRoomReconnectToken(roomId) {
+	const storageKey = `gather-reconnect-${roomId}`;
+	try {
+		const existingToken = localStorage.getItem(storageKey);
+		if (existingToken) return existingToken;
+	} catch {}
+	const tokenBytes = new Uint8Array(32);
+	crypto.getRandomValues(tokenBytes);
+	const token = Array.from(tokenBytes, (value) => value.toString(16).padStart(2, '0')).join('');
+	try {
+		localStorage.setItem(storageKey, token);
+	} catch {}
+	return token;
+}
+
+function handleRoomJoinResponse({ state, host }) {
+	if (state === 'pending') {
+		joinScreen.classList.add('hidden');
+		meetingScreen.classList.add('hidden');
+		waitingScreen.classList.remove('hidden');
+	} else if (state === 'approved') {
+		isHost = Boolean(host);
+		waitingScreen.classList.add('hidden');
+		meetingScreen.classList.remove('hidden');
+		startMeetingDuration();
+		publishMediaState();
+	} else if (state === 'error') {
+		showMeetingToast('Could not rejoin the meeting. Check your connection and try again.', 'error');
+	}
+}
+
+function resetPeersForRoomReconnect() {
+	peerGeneration += 1;
+	for (const peer of peers.values()) {
+		window.clearTimeout(peer.disconnectTimer);
+		peer.connection.onconnectionstatechange = null;
+		peer.connection.close();
+	}
+	peers.clear();
+	pendingPeerConnections.clear();
+	for (const entry of audioAnalyzers.values()) entry.source.disconnect();
+	audioAnalyzers.clear();
+	for (const audio of remoteAudioPlayers.values()) audio.remove();
+	remoteAudioPlayers.clear();
+	audioUnlockNotice?.remove();
+	audioUnlockNotice = null;
+	videoGrid.querySelectorAll('.video-tile').forEach((tile) => tile.remove());
+	participants.clear();
+	activePresentations.clear();
+	activeSpeakerId = null;
+	pinnedParticipantId = null;
+	activeSpeakerCandidate = null;
+	videoGrid.classList.remove('active-speaker-mode', 'presentation-mode');
+	speakerLayout.classList.add('hidden');
+	localTileId = socket.id;
+	participants.set(socket.id, { name: displayName, isHost: false, role: 'participant', mediaState: { audioMuted: false, videoMuted: false } });
+	addVideo(localTileId, displayName, localStream, true);
+}
+
+async function rejoinMeetingRoom() {
+	resetPeersForRoomReconnect();
+	showMeetingToast('Connection restored. Rejoining the meeting…');
+	lastJoinedSocketId = socket.id;
+	socket.emit('join-room', { roomId: currentRoom, name: displayName, reconnectToken }, handleRoomJoinResponse);
+}
+
+socket.on('connect', () => {
+	if (!roomJoinRequested || !lastJoinedSocketId || socket.id === lastJoinedSocketId || !localStream) return;
+	rejoinMeetingRoom().catch(() => showMeetingToast('Could not restore the meeting connection. Please rejoin.', 'error'));
+});
 
 function updateMeetingDuration() {
 	if (!meetingStartedAt) return;
@@ -334,10 +472,54 @@ function showFloatingReaction(reaction, name, own = false) {
 	if (!layer) return;
 	const item = document.createElement('span');
 	item.className = `floating-reaction${animateReactions ? '' : ' static-reaction'}`;
-	item.textContent = reaction;
-	item.title = name || 'Reaction';
+	const emoji = document.createElement('span');
+	emoji.className = 'reaction-emoji';
+	emoji.textContent = reaction;
+	const sender = document.createElement('span');
+	sender.className = 'reaction-name';
+	sender.textContent = own ? 'You' : name || 'Participant';
+	item.append(emoji, sender);
+	const reactionOffset = ((reactionSequence++ % 5) - 2) * Math.min(84, window.innerWidth * 0.12);
+	item.style.setProperty('--reaction-offset', `${reactionOffset}px`);
+	item.title = `${sender.textContent} reacted ${reaction}`;
+	item.setAttribute('aria-label', item.title);
 	layer.appendChild(item);
 	window.setTimeout(() => item.remove(), animateReactions ? 2800 : 1800);
+}
+
+function updateConnectionStatus() {
+	const indicator = $('connection-status');
+	const label = $('connection-status-label');
+	if (!indicator || !label) return;
+	const activePeers = [...peers.entries()].filter(([, peer]) => peer.connection.connectionState !== 'closed');
+	let state = 'waiting';
+	let message = 'Waiting for others';
+	if (activePeers.length) {
+		const connected = activePeers.filter(([, peer]) => peer.connection.connectionState === 'connected').length;
+		const failed = activePeers.some(([, peer]) => peer.connection.connectionState === 'failed' || peer.connection.iceConnectionState === 'failed');
+		const disconnected = activePeers.some(([, peer]) => peer.connection.connectionState === 'disconnected' || peer.connection.iceConnectionState === 'disconnected');
+		if (connected === activePeers.length) {
+			state = 'connected';
+			message = 'Connected';
+		} else if (failed) {
+			state = 'failed';
+			message = 'Connection issue';
+		} else if (disconnected) {
+			state = 'reconnecting';
+			message = 'Reconnecting';
+		} else {
+			state = 'connecting';
+			message = connected ? `Connected ${connected}/${activePeers.length}` : 'Connecting';
+		}
+	}
+	const details = activePeers.map(([id, peer]) => {
+		const name = peer.name || participants.get(id)?.name || 'Participant';
+		return `${name}: WebRTC ${peer.connection.connectionState}, ICE ${peer.connection.iceConnectionState}`;
+	});
+	indicator.dataset.state = state;
+	indicator.title = details.join('\n') || 'Waiting for another participant to join.';
+	indicator.setAttribute('aria-label', `WebRTC status: ${message}. ${details.join('. ')}`);
+	label.textContent = message;
 }
 
 function updateBadges(id) {
@@ -555,10 +737,9 @@ function renderWaitingQueue(queue) {
 async function ensureLocalAudioTrack() {
 	if (!localStream || localStream.getAudioTracks().length) return;
 	try {
-		const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+		const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: microphoneConstraints, video: false });
 		const micTrack = audioOnly.getAudioTracks()[0];
 		if (micTrack) localStream.addTrack(micTrack);
-		audioOnly.getTracks().forEach((track) => track.stop());
 	} catch {
 		showMeetingToast('Microphone access is required for other participants to hear you.', 'error');
 	}
@@ -615,12 +796,46 @@ async function synchronizeScreenTransceivers(peer, answeringOffer = false) {
 	}
 }
 
+async function startPeerIceRestart(id, peer) {
+	const connection = peer?.connection;
+	if (!connection || peer.iceRestartInProgress || connection.signalingState === 'closed') return;
+	if (connection.signalingState !== 'stable') {
+		peer.restartWhenStable = true;
+		return;
+	}
+	peer.iceRestartInProgress = true;
+	try {
+		const offer = await connection.createOffer({ iceRestart: true });
+		await connection.setLocalDescription(offer);
+		socket.emit('signal', { target: id, signal: { description: connection.localDescription } });
+	} catch {
+		peer.iceRestartInProgress = false;
+		showMeetingToast('Could not restore the participant audio connection. Please rejoin the meeting.', 'error');
+	}
+}
+
+function requestPeerIceRestart(id, peer) {
+	if (!peer || peer.iceRestartInProgress) return;
+	if (String(socket.id).localeCompare(String(id)) < 0) {
+		startPeerIceRestart(id, peer);
+	} else {
+		socket.emit('ice-restart', { target: id });
+	}
+}
+
+function hasTurnServer() {
+	return iceServers.some((server) => [].concat(server.urls || []).some((url) => /^turns?:/i.test(url)));
+}
+
 async function createPeerConnection(id, name, initiator) {
 	if (!localStream) return null;
+	const generation = peerGeneration;
 	await ensureLocalAudioTrack();
+	if (generation !== peerGeneration) return null;
 	const connection = new RTCPeerConnection({ iceServers });
+	const microphoneTrack = await getOutgoingMicrophoneTrack(localStream.getAudioTracks()[0]);
 	const videoTrack = localStream.getVideoTracks()[0];
-	const outgoingStream = new MediaStream([...localStream.getAudioTracks(), ...(videoTrack ? [videoTrack] : [])]);
+	const outgoingStream = new MediaStream([...(microphoneTrack ? [microphoneTrack] : []), ...(videoTrack ? [videoTrack] : [])]);
 	let cameraVideoTransceiver;
 	let cameraAudioTransceiver;
 	outgoingStream.getTracks().forEach((track) => {
@@ -635,13 +850,17 @@ async function createPeerConnection(id, name, initiator) {
 	const remoteScreenStream = new MediaStream();
 	const remoteAudioStream = new MediaStream();
 	const remoteScreenAudioStream = new MediaStream();
-	const peerState = { connection, name, cameraVideoTransceiver, cameraAudioTransceiver, screenVideoTransceiver, screenAudioTransceiver, screenVideoSender: screenVideoTransceiver.sender, screenAudioSender: screenAudioTransceiver.sender, remoteStream, remoteScreenStream, remoteAudioStream, remoteScreenAudioStream };
+	const peerState = { connection, name, cameraVideoTransceiver, cameraAudioTransceiver, screenVideoTransceiver, screenAudioTransceiver, screenVideoSender: screenVideoTransceiver.sender, screenAudioSender: screenAudioTransceiver.sender, remoteStream, remoteScreenStream, remoteAudioStream, remoteScreenAudioStream, pendingIceCandidates: [], disconnectTimer: null, iceRestartInProgress: false, restartWhenStable: false };
 	peers.set(id, peerState);
 	if (screenStream) {
 		const sharedVideo = screenStream.getVideoTracks()[0];
 		const sharedAudio = screenStream.getAudioTracks()[0];
 		if (sharedVideo) await screenVideoTransceiver.sender.replaceTrack(sharedVideo);
 		if (sharedAudio) await screenAudioTransceiver.sender.replaceTrack(sharedAudio);
+	}
+	if (generation !== peerGeneration) {
+		connection.close();
+		return null;
 	}
 	connection.onicecandidate = ({ candidate }) => candidate && socket.emit('signal', { target: id, signal: { candidate } });
 	connection.ontrack = ({ track, transceiver }) => {
@@ -683,26 +902,36 @@ async function createPeerConnection(id, name, initiator) {
 		}
 	};
 	connection.onconnectionstatechange = () => {
-		if (connection.connectionState === 'failed') {
-			if (!iceRestartInProgress) {
-				showMeetingToast('Could not connect to participant media. Configure TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL in Render for mobile or restricted networks.', 'error');
-				iceRestartInProgress = true;
-				connection.restartIce();
-				setTimeout(() => { iceRestartInProgress = false; }, 2000);
+		if (connection.connectionState === 'connected') {
+			window.clearTimeout(peerState.disconnectTimer);
+			peerState.disconnectTimer = null;
+			peerState.iceRestartInProgress = false;
+		} else if (connection.connectionState === 'failed') {
+			if (!hasTurnServer() && !turnConfigurationWarningShown) {
+				turnConfigurationWarningShown = true;
+				showMeetingToast('This network needs a TURN relay. Configure TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL in your hosting settings.', 'error');
 			}
-		} else if (['closed', 'disconnected'].includes(connection.connectionState)) {
+			requestPeerIceRestart(id, peerState);
+		} else if (connection.connectionState === 'disconnected' && !peerState.disconnectTimer) {
+			peerState.disconnectTimer = window.setTimeout(() => {
+				peerState.disconnectTimer = null;
+				if (connection.connectionState === 'disconnected') requestPeerIceRestart(id, peerState);
+			}, 5000);
+		} else if (connection.connectionState === 'closed') {
 			removePeer(id);
+		}
+	};
+	connection.onsignalingstatechange = () => {
+		if (connection.signalingState !== 'stable') return;
+		if (peerState.restartWhenStable) {
+			peerState.restartWhenStable = false;
+			requestPeerIceRestart(id, peerState);
+		} else {
+			peerState.iceRestartInProgress = false;
 		}
 	};
 	connection.oniceconnectionstatechange = () => {
 		currentConnectionState = connection.iceConnectionState;
-		if (connection.iceConnectionState === 'disconnected' || connection.iceConnectionState === 'failed') {
-			if (!iceRestartInProgress && connection.iceConnectionState === 'failed') {
-				iceRestartInProgress = true;
-				connection.restartIce();
-				setTimeout(() => { iceRestartInProgress = false; }, 2000);
-			}
-		}
 	};
 	if (initiator) {
 		const offer = await connection.createOffer();
@@ -715,7 +944,10 @@ async function createPeerConnection(id, name, initiator) {
 
 function removePeer(id) {
 	const peer = peers.get(id);
-	if (peer) peer.connection.close();
+	if (peer) {
+		window.clearTimeout(peer.disconnectTimer);
+		peer.connection.close();
+	}
 	peers.delete(id);
 	audioAnalyzers.delete(id);
 	removeRemoteAudio(id);
@@ -734,21 +966,8 @@ async function detectPreferredAudioDevices() {
 	try {
 		const devices = await navigator.mediaDevices.enumerateDevices();
 		const outputDevices = devices.filter((device) => device.kind === 'audiooutput');
-		const inputDevices = devices.filter((device) => device.kind === 'audioinput');
-		const match = (deviceList, keywords) => deviceList.find((device) => {
-			const label = (device.label || '').toLowerCase();
-			return keywords.some((keyword) => label.includes(keyword));
-		}) || deviceList[0];
-
-		const preferredOutput = match(outputDevices, ['headphone', 'headset', 'usb', 'bluetooth', 'airpods']);
-		if (preferredOutput) preferredAudioOutputId = preferredOutput.deviceId;
-
-		const preferredInput = match(inputDevices, ['headphone', 'headset', 'usb', 'bluetooth', 'microphone']);
-		if (preferredInput) preferredAudioInputId = preferredInput.deviceId;
-		
 		updateHeadphoneStatus(outputDevices);
 	} catch {
-		preferredAudioInputId = null;
 		preferredAudioOutputId = null;
 	}
 }
@@ -832,6 +1051,7 @@ async function startMeeting(event) {
 	try { currentRoom = new URL(roomValue).searchParams.get('room') || roomValue; } catch { currentRoom = roomValue; }
 	currentRoom = currentRoom.trim();
 	if (!currentRoom) return $('join-error').textContent = 'Enter a meeting code or link.';
+	reconnectToken = getRoomReconnectToken(currentRoom);
 	try {
 		try {
 			const response = await fetch('/api/ice-servers');
@@ -839,18 +1059,12 @@ async function startMeeting(event) {
 		} catch { /* Keep the public STUN server as a fallback. */ }
 		await detectPreferredAudioDevices();
 		monitorAudioDevices();
-		const audioConstraints = {
-			echoCancellation: true,
-			noiseSuppression: true,
-			autoGainControl: true,
-		};
-		if (preferredAudioInputId) audioConstraints.deviceId = { exact: preferredAudioInputId };
 		const videoConstraints = { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' };
 		try {
-			localStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: audioConstraints });
+			localStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: microphoneConstraints });
 		} catch (error) {
 			if (error.name !== 'OverconstrainedError') throw error;
-			localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+			localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: microphoneConstraints });
 		}
 		localTileId = socket.id || 'local';
 		participants.set(socket.id, { name: displayName, isHost: false, role: 'participant', mediaState: { audioMuted: false, videoMuted: false } });
@@ -862,21 +1076,14 @@ async function startMeeting(event) {
 		joinScreen.classList.add('hidden');
 		meetingScreen.classList.add('hidden');
 		waitingScreen.classList.add('hidden');
-		socket.emit('join-room', { roomId: currentRoom, name: displayName }, ({ state, host }) => {
-			if (state === 'pending') {
-				joinScreen.classList.add('hidden');
-				meetingScreen.classList.add('hidden');
-				waitingScreen.classList.remove('hidden');
-			} else if (state === 'approved' && host) {
-				waitingScreen.classList.add('hidden');
-				meetingScreen.classList.remove('hidden');
-				startMeetingDuration();
-			} else if (state === 'approved') {
-				waitingScreen.classList.add('hidden');
-				meetingScreen.classList.remove('hidden');
-				startMeetingDuration();
-			}
-		});
+		roomJoinRequested = true;
+		const joinRoom = () => {
+			if (!socket.connected) return;
+			lastJoinedSocketId = socket.id;
+			socket.emit('join-room', { roomId: currentRoom, name: displayName, reconnectToken }, handleRoomJoinResponse);
+		};
+		if (socket.connected) joinRoom();
+		else socket.once('connect', joinRoom);
 	} catch (error) {
 		const messages = {
 			NotAllowedError: 'Allow camera and microphone access in your phone browser settings, then try again.',
@@ -904,13 +1111,18 @@ socket.on('signal', async ({ sender, signal }) => {
 	const connection = peer.connection;
 	if (signal.description) {
 		await connection.setRemoteDescription(signal.description);
+		const pendingCandidates = peer.pendingIceCandidates.splice(0);
+		await Promise.all(pendingCandidates.map((candidate) => connection.addIceCandidate(candidate).catch(() => {})));
 		await synchronizeScreenTransceivers(peer, signal.description.type === 'offer');
 		if (signal.description.type === 'offer') {
 			const answer = await connection.createAnswer();
 			await connection.setLocalDescription(answer);
 			socket.emit('signal', { target: sender, signal: { description: connection.localDescription } });
 		}
-	} else if (signal.candidate) await connection.addIceCandidate(signal.candidate).catch(() => {});
+	} else if (signal.candidate) {
+		if (!connection.remoteDescription) peer.pendingIceCandidates.push(signal.candidate);
+		else await connection.addIceCandidate(signal.candidate).catch(() => {});
+	}
 });
 socket.on('presentation-stopped', ({ id }) => {
 	activePresentations.delete(id);
@@ -1054,11 +1266,7 @@ socket.on('file-share-denied', ({ to, filename }) => {
 });
 socket.on('ice-restart-required', ({ from }) => {
 	const peer = peers.get(from);
-	if (peer && !iceRestartInProgress) {
-		iceRestartInProgress = true;
-		peer.connection.restartIce();
-		setTimeout(() => { iceRestartInProgress = false; }, 2000);
-	}
+	if (peer && String(socket.id).localeCompare(String(from)) < 0) startPeerIceRestart(from, peer);
 });
 
 $('join-form').addEventListener('submit', startMeeting);
@@ -1364,7 +1572,7 @@ async function toggleMeetingFullscreen() {
 		setFilePanelOpen(false);
 		setUtilityPanelOpen(false);
 		$('reaction-picker').classList.add('hidden');
-		if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+		if (!document.fullscreenElement) await meetingScreen.requestFullscreen();
 		else await document.exitFullscreen();
 	} catch { showMeetingError('Fullscreen is not available in this browser.'); }
 }
@@ -1469,17 +1677,20 @@ async function replaceLocalDeviceTrack(kind, deviceId) {
 	const oldTrack = localStream.getTracks().find((track) => track.kind === kind);
 	try {
 		const constraints = kind === 'audio'
-			? { audio: deviceId ? { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true } : true, video: false }
+			? { audio: deviceId ? { ...microphoneConstraints, deviceId: { exact: deviceId } } : microphoneConstraints, video: false }
 			: { audio: false, video: deviceId ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } } : true };
 		const replacementStream = await navigator.mediaDevices.getUserMedia(constraints);
 		const replacementTrack = replacementStream.getTracks().find((track) => track.kind === kind);
 		if (!replacementTrack) throw new Error(`No ${kind} track was returned by the selected device.`);
 		replacementTrack.enabled = oldTrack?.enabled ?? true;
+		const outgoingTrack = kind === 'audio' ? await getOutgoingMicrophoneTrack(replacementTrack) : replacementTrack;
 		for (const peer of peers.values()) {
-			const sender = oldTrack
+			const sender = kind === 'audio'
+				? peer.cameraAudioTransceiver?.sender
+				: oldTrack
 				? peer.connection.getSenders().find((item) => item.track === oldTrack)
-				: kind === 'audio' ? peer.cameraAudioTransceiver?.sender : peer.cameraVideoTransceiver?.sender;
-			if (sender) await sender.replaceTrack(replacementTrack);
+				: peer.cameraVideoTransceiver?.sender;
+			if (sender) await sender.replaceTrack(outgoingTrack);
 		}
 		if (kind === 'audio') {
 			audioAnalyzers.get(localTileId)?.source.disconnect();
@@ -1487,6 +1698,7 @@ async function replaceLocalDeviceTrack(kind, deviceId) {
 		}
 		if (oldTrack) {
 			localStream.removeTrack(oldTrack);
+			if (kind === 'audio') releaseProcessedMicrophoneTrack(oldTrack);
 			oldTrack.stop();
 		}
 		localStream.addTrack(replacementTrack);

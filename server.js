@@ -43,15 +43,54 @@ app.use((req, res, next) => {
 const rooms = new Map();
 const waitingQueues = new Map();
 const roomSettings = new Map();
+const reconnectSessions = new Map();
+
+function getReconnectSessionKey(roomId, token) {
+	return `${roomId}\0${token}`;
+}
+
+function clearReconnectSession(key) {
+	const session = reconnectSessions.get(key);
+	if (session) clearTimeout(session.timeout);
+	reconnectSessions.delete(key);
+}
 
 io.on('connection', (socket) => {
-	socket.on('join-room', ({ roomId, name, email }, acknowledge) => {
+	socket.on('join-room', ({ roomId, name, email, reconnectToken }, acknowledge) => {
 		const cleanRoomId = String(roomId || '').trim().slice(0, 80);
 		const cleanName = String(name || 'Guest').trim().slice(0, 40) || 'Guest';
 		const cleanEmail = String(email || '').trim().slice(0, 160);
 		if (!cleanRoomId) {
 			socket.emit('join-error', 'Enter a room name to continue.');
 			return acknowledge?.({ state: 'error' });
+		}
+
+		const cleanReconnectToken = String(reconnectToken || '').slice(0, 128);
+		const reconnectKey = cleanReconnectToken && getReconnectSessionKey(cleanRoomId, cleanReconnectToken);
+		const reconnectSession = reconnectKey && reconnectSessions.get(reconnectKey);
+		if (reconnectSession && reconnectSession.expiresAt > Date.now()) {
+			clearReconnectSession(reconnectKey);
+			const room = rooms.get(cleanRoomId) || new Map();
+			if (!roomSettings.has(cleanRoomId)) roomSettings.set(cleanRoomId, reconnectSession.settings);
+			const isHost = room.size === 0 || (reconnectSession.participant.isHost && ![...room.values()].some((participant) => participant.isHost));
+			const participant = { ...reconnectSession.participant, name: cleanName, email: cleanEmail, isHost, state: 'approved' };
+			room.set(socket.id, participant);
+			rooms.set(cleanRoomId, room);
+			socket.join(cleanRoomId);
+			socket.data.roomId = cleanRoomId;
+			socket.data.name = cleanName;
+			socket.data.email = cleanEmail;
+			socket.data.reconnectToken = cleanReconnectToken;
+			socket.data.state = 'approved';
+			const peers = [...room.entries()].filter(([id]) => id !== socket.id).map(([id, user]) => ({ id, ...user }));
+			socket.emit('room-users', peers);
+			socket.emit('host-status', isHost);
+			socket.emit('waiting-queue', [...(waitingQueues.get(cleanRoomId) || new Map()).entries()].map(([id, user]) => ({ id, ...user })));
+			socket.emit('room-settings', roomSettings.get(cleanRoomId));
+			socket.emit('approval-granted');
+			acknowledge?.({ state: 'approved', host: isHost, reconnected: true });
+			socket.to(cleanRoomId).emit('user-joined', { id: socket.id, name: cleanName, email: cleanEmail });
+			return;
 		}
 
 		const room = rooms.get(cleanRoomId);
@@ -66,6 +105,7 @@ io.on('connection', (socket) => {
 			socket.data.roomId = cleanRoomId;
 			socket.data.name = cleanName;
 			socket.data.email = cleanEmail;
+			socket.data.reconnectToken = cleanReconnectToken;
 			socket.data.state = 'approved';
 			socket.emit('room-users', []);
 			socket.emit('host-status', true);
@@ -79,6 +119,7 @@ io.on('connection', (socket) => {
 				socket.data.roomId = cleanRoomId;
 				socket.data.name = cleanName;
 				socket.data.email = cleanEmail;
+				socket.data.reconnectToken = cleanReconnectToken;
 				socket.data.state = 'approved';
 				socket.emit('room-users', [...room.entries()].filter(([id]) => id !== socket.id).map(([id, participant]) => ({ id, ...participant })));
 				socket.emit('approval-granted');
@@ -92,6 +133,7 @@ io.on('connection', (socket) => {
 			socket.data.roomId = cleanRoomId;
 			socket.data.name = cleanName;
 			socket.data.email = cleanEmail;
+			socket.data.reconnectToken = cleanReconnectToken;
 			socket.data.state = 'pending';
 			socket.emit('waiting-room', { status: 'pending', message: 'Waiting for host to approve...' });
 			const queueList = [...waitingQueue.entries()].map(([id, user]) => ({ id, ...user }));
@@ -293,6 +335,19 @@ io.on('connection', (socket) => {
 		}
 		if (!room?.has(socket.id)) return;
 		const wasHost = room.get(socket.id)?.isHost;
+		const participant = room.get(socket.id);
+		if (participant && socket.data.reconnectToken) {
+			const reconnectKey = getReconnectSessionKey(roomId, socket.data.reconnectToken);
+			clearReconnectSession(reconnectKey);
+			const session = {
+				participant: { ...participant },
+				settings: roomSettings.get(roomId) || { quickAccess: false, chatAllowed: true, handRaiseAllowed: true, screenShareAllowed: true, audioAllowed: true, videoAllowed: true, reactionsAllowed: true },
+				expiresAt: Date.now() + 90000,
+				timeout: null
+			};
+			session.timeout = setTimeout(() => reconnectSessions.delete(reconnectKey), 90000);
+			reconnectSessions.set(reconnectKey, session);
+		}
 		room.delete(socket.id);
 		if (wasHost && room.size > 0) {
 			const [newHostId, newHost] = room.entries().next().value;
