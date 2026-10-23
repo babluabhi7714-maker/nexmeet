@@ -458,6 +458,7 @@ body { background: var(--paper); }
 #leave-button:hover { background: linear-gradient(180deg, #ce5543, #a93a2c); }
 .utility-panel { position: absolute; top: 12px; right: 16px; bottom: 12px; z-index: 9; width: min(340px, calc(100% - 24px)); border: 1px solid rgba(255,255,255,0.08); border-radius: 18px; background: linear-gradient(180deg, rgba(23, 29, 27, 0.98), rgba(17, 21, 20, 0.98)); box-shadow: 0 16px 42px rgba(0,0,0,.18); }
 .more-tile { border-radius: 12px; background: linear-gradient(180deg, rgba(33,41,38,0.96), rgba(24,31,29,0.96)); border-color: rgba(255,255,255,0.08); }
+.meeting-screen #captions-button.active { border-color: rgba(168, 223, 114, 0.5); background: linear-gradient(180deg, rgba(39, 50, 47, 1), rgba(32, 42, 39, 1)); color: #d8f3c2; }
 .utility-action { min-height: 88px; }
 .utility-action small { color: var(--muted); font-size: 10px; }
 .utility-action.active { border-color: rgba(168, 223, 114, 0.45); background: linear-gradient(180deg, rgba(39, 50, 47, 1), rgba(32, 42, 39, 1)); color: #d8f3c2; }
@@ -567,7 +568,169 @@ body { background: var(--paper); }
 .meeting-screen .controls { position: relative; z-index: 12; min-height: 76px; }
 .meeting-screen .reaction-layer { z-index: 14; }
 
+.video-grid.active-speaker-mode .video-tile.main-speaker.presentation-tile video,
+.speaker-stage .video-tile.presentation-tile video {
+    object-fit: contain;
+    background: #0b100e;
+}
+.meeting-body { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.meeting-body.has-sidebar { grid-template-columns: minmax(0, 1fr) minmax(280px, 320px); }
+.meeting-body.has-sidebar .video-grid { grid-column: 1; }
+.meeting-body.has-sidebar .sidebar-stack { grid-column: 2; grid-row: 1; }
+.sidebar-stack { min-width: 0; }
+.video-grid { min-width: 0; min-height: 0; }
+.speaker-layout { grid-template-rows: minmax(0, 1fr) clamp(84px, 16vh, 112px); }
+.speaker-stage, .participant-rail { min-width: 0; }
+.video-tile:focus-visible { outline: 2px solid #c7f36b; outline-offset: 2px; }
+
+@media (min-width: 901px) {
+    .sidebar-stack > .chat-panel.open,
+    .sidebar-stack > .host-panel:not(.hidden),
+    .sidebar-stack > .file-panel:not(.hidden) {
+        position: relative;
+        inset: auto;
+        top: auto;
+        right: auto;
+        bottom: auto;
+        left: auto;
+        z-index: 1;
+        flex: 1 1 auto;
+        width: 100%;
+        min-height: 0;
+        max-height: none;
+        margin: 0;
+    }
+}
+
+.host-panel {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    gap: 14px;
+    padding: 18px;
+    overflow: hidden;
+    border-radius: 16px;
+}
+.host-panel .chat-header { flex: 0 0 auto; }
+.participant-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-content: start;
+    grid-auto-rows: min-content;
+    gap: 10px;
+    margin: 0 -2px;
+    padding: 2px;
+}
+.meeting-screen .participant-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 9px;
+    min-height: 0;
+    padding: 11px 12px;
+    border-radius: 12px;
+    text-align: left;
+}
+.meeting-screen .participant-row > .participant-name {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 1.45;
+    text-overflow: ellipsis;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.meeting-screen .participant-row > .participant-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+}
+.meeting-screen .participant-row .participant-actions button {
+    min-width: 0;
+    min-height: 32px;
+    margin: 0;
+    padding: 5px 4px;
+    border-radius: 8px;
+    font-size: 10px;
+    white-space: nowrap;
+}
+
+.utility-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 18px;
+}
+.utility-panel.show-settings {
+    min-height: 0;
+    max-height: calc(100dvh - 24px);
+    overflow: hidden;
+    padding: 16px;
+}
+.utility-panel.show-settings .more-sheet-header { display: none; }
+.utility-panel.show-settings .settings-section {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    width: 100%;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 3px 4px 0;
+}
+.utility-panel.show-settings .settings-heading {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    flex: 0 0 auto;
+    margin: 0 -1px 4px;
+    padding: 4px 1px 12px;
+    background: #171d1b;
+}
+.settings-heading > div:first-child { min-width: 0; }
+.settings-heading .eyebrow { margin-bottom: 5px; }
+.settings-heading-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.settings-heading-actions .compact-button { width: auto; min-height: 34px; padding: 6px 9px; white-space: nowrap; }
+.settings-heading-actions .icon-button { flex: 0 0 34px; width: 34px; height: 34px; }
+.meeting-screen .utility-panel .settings-group {
+    width: 100%;
+    min-width: 0;
+    gap: 8px;
+    padding: 13px 14px;
+    margin-top: 9px;
+    border-radius: 12px;
+}
+.settings-group h4 { margin-bottom: 2px; }
+.settings-option { gap: 12px; min-width: 0; }
+.settings-option > span { flex: 1 1 auto; min-width: 0; }
+.settings-option strong { line-height: 1.35; }
+.settings-option small { line-height: 1.4; }
+.settings-select-wrap { min-width: 0; gap: 6px; padding-top: 4px; }
+.settings-select-wrap label { margin: 0; }
+.meeting-screen .settings-select-wrap select { min-width: 0; min-height: 42px; border-radius: 9px; }
+.settings-group .compact-button { justify-self: start; }
+
 @media (max-width: 800px) {
+    .meeting-body,
+    .meeting-body.has-sidebar { grid-template-columns: minmax(0, 1fr); }
+    .meeting-body.has-sidebar .sidebar-stack { grid-column: 1; grid-row: 1; }
+    .host-panel { min-height: 0; }
+    .sidebar-stack > .chat-panel.open,
+    .sidebar-stack > .host-panel:not(.hidden),
+    .sidebar-stack > .file-panel:not(.hidden) {
+        position: absolute;
+        inset: 8px;
+        width: auto;
+        min-height: 0;
+        max-height: none;
+        margin: 0;
+        overflow: hidden;
+    }
+    .utility-panel { padding: 16px; }
+    .utility-panel.show-settings { max-height: calc(100dvh - 16px); }
     .meeting-duration { margin-left: 5px; padding: 3px 5px; font-size: 9px; }
     .speaker-layout { grid-template-rows: minmax(0, 1fr) 86px; }
     .self-preview-layer { right: 8px; bottom: 98px; width: min(132px, 34%); }
@@ -582,51 +745,15 @@ body { background: var(--paper); }
     .meeting-duration { display: none; }
     .self-preview-layer { bottom: 96px; width: min(112px, 33%); }
 }
-
-.participant-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 148px;
-    align-items: center;
-    gap: 8px;
-    min-height: 48px;
-}
-.participant-name {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.participant-actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 3px;
-    width: 148px;
-    min-width: 0;
-}
-.participant-row button {
-    min-height: 30px;
-    flex: 1 1 0;
-    min-width: 0;
-    padding: 4px;
-    font-size: 8px;
-    white-space: nowrap;
-}
-
 @media (max-width: 520px) {
-    .participant-row { grid-template-columns: minmax(0, 1fr) 140px; gap: 5px; padding: 8px; }
-    .participant-actions { gap: 3px; }
-    .participant-actions { width: 140px; }
-    .participant-row button { padding: 4px 2px; font-size: 8px; }
+    .host-panel { padding: 14px; }
+    .utility-panel { padding: 14px; }
+    .utility-panel.show-settings { padding: 12px; }
+    .settings-heading h3 { font-size: 20px; }
+    .settings-heading-actions .compact-button { padding: 6px 7px; font-size: 11px; }
 }
-
-.settings-heading-actions { display: flex; align-items: center; gap: 8px; }
-.settings-heading-actions .compact-button { width: auto; min-height: 36px; padding: 6px 10px; }
 .meeting-screen .settings-heading-actions .secondary-button { background: #202825; border-color: #35413a; color: #edf2ef; }
 .meeting-screen .settings-heading-actions .secondary-button:hover { background: #2a3630; border-color: #506054; }
-.utility-panel.show-settings { overflow: hidden; }
-.utility-panel.show-settings .settings-section { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-.utility-panel.show-settings .settings-heading { position: sticky; top: 0; z-index: 3; padding-top: 4px; background: #171d1b; }
 .meeting-screen .caption-display { z-index: 11; max-height: min(25vh, 200px); overflow-y: auto; white-space: pre-line; }
 
 .meeting-screen { min-height: 0; }

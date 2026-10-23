@@ -34,6 +34,9 @@ let activeSpeakerCandidate = null;
 let activeSpeakerCandidateSince = 0;
 let activeSpeakerLastHeard = 0;
 let activeSpeakerLastSwitch = 0;
+let cameraEnabled = true;
+let cameraToggleInProgress = false;
+let preferredCameraDeviceId = null;
 let hideVideoTiles = false;
 let showOtherReactions = true;
 let animateReactions = true;
@@ -43,6 +46,9 @@ let meetingDurationTimer = null;
 let captionRecognition;
 let captionRestartTimer = null;
 let captionsEnabled = false;
+let captionLanguage = 'en-IN';
+let captionNetworkWarningShown = false;
+let captionRestartDelay = 250;
 let audioUnlockNotice;
 
 const $ = (id) => document.getElementById(id);
@@ -549,9 +555,13 @@ function updateBadges(id) {
 	}
 }
 
+function isCameraEnabled() {
+	return Boolean(cameraEnabled && localStream?.getVideoTracks().some((track) => track.readyState === 'live' && track.enabled));
+}
+
 function publishMediaState() {
 	const audioMuted = localStream?.getAudioTracks()[0]?.enabled === false;
-	const videoMuted = localStream?.getVideoTracks()[0]?.enabled === false;
+	const videoMuted = !isCameraEnabled();
 	const participant = participants.get(socket.id);
 	if (participant) participant.mediaState = { audioMuted, videoMuted };
 	updateBadges(localTileId || socket.id);
@@ -844,6 +854,7 @@ async function createPeerConnection(id, name, initiator) {
 		if (track.kind === 'video') cameraVideoTransceiver = transceiver;
 		else if (track.kind === 'audio') cameraAudioTransceiver = transceiver;
 	});
+	if (!cameraVideoTransceiver) cameraVideoTransceiver = connection.addTransceiver('video', { direction: 'sendrecv' });
 	const screenVideoTransceiver = connection.addTransceiver('video', { direction: 'sendrecv' });
 	const screenAudioTransceiver = connection.addTransceiver('audio', { direction: 'sendrecv' });
 	const remoteStream = new MediaStream();
@@ -1009,17 +1020,98 @@ function syncAudioOutputSelects(selectedValue = '') {
 
 function updateMediaControlsUI() {
 	const micTrack = localStream?.getAudioTracks()[0];
-	const videoTrack = localStream?.getVideoTracks()[0];
 	const micEnabled = Boolean(micTrack && micTrack.enabled);
-	const cameraEnabled = Boolean(videoTrack && videoTrack.enabled);
+	const cameraIsEnabled = isCameraEnabled();
 	$('mic-button')?.classList.toggle('muted', !micEnabled);
 	$('settings-mic-toggle') && ($('settings-mic-toggle').checked = micEnabled);
 	const micLabel = document.querySelector('#mic-button small');
 	if (micLabel) micLabel.textContent = micEnabled ? 'Microphone' : 'Unmute';
-	$('camera-button')?.classList.toggle('muted', !cameraEnabled);
-	$('settings-camera-toggle') && ($('settings-camera-toggle').checked = cameraEnabled);
+	$('camera-button')?.classList.toggle('muted', !cameraIsEnabled);
+	$('settings-camera-toggle') && ($('settings-camera-toggle').checked = cameraIsEnabled);
 	const cameraLabel = document.querySelector('#camera-button small');
-	if (cameraLabel) cameraLabel.textContent = cameraEnabled ? 'Camera' : 'Video off';
+	if (cameraLabel) cameraLabel.textContent = cameraIsEnabled ? 'Camera' : 'Video off';
+}
+
+async function setCameraEnabled(enabled) {
+	const currentTrack = localStream?.getVideoTracks().find((track) => track.readyState === 'live');
+	if (!localStream || cameraToggleInProgress) return;
+	if (enabled === isCameraEnabled()) {
+		updateMediaControlsUI();
+		return;
+	}
+
+	cameraToggleInProgress = true;
+	$('camera-button').disabled = true;
+	$('settings-camera-toggle').disabled = true;
+	try {
+		if (enabled && currentTrack && !currentTrack.enabled) {
+			currentTrack.enabled = true;
+			cameraEnabled = true;
+		} else if (!enabled) {
+			const replacedSenders = [];
+			try {
+				for (const peer of peers.values()) {
+					const sender = peer.cameraVideoTransceiver?.sender;
+					if (sender?.track) {
+						await sender.replaceTrack(null);
+						replacedSenders.push(sender);
+					}
+				}
+			} catch (error) {
+				for (const sender of replacedSenders) {
+					try { await sender.replaceTrack(currentTrack); } catch { /* Keep the local camera active if rollback is unavailable. */ }
+				}
+				showMeetingToast('Could not turn off the camera for every participant.', 'error');
+				return;
+			}
+			cameraEnabled = false;
+			if (currentTrack) {
+				localStream.removeTrack(currentTrack);
+				currentTrack.stop();
+			}
+		} else {
+			let replacementTrack;
+			try {
+				const video = preferredCameraDeviceId
+					? { deviceId: { exact: preferredCameraDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+					: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: cameraFacingMode };
+				const replacementStream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+				replacementTrack = replacementStream.getVideoTracks()[0];
+				if (!replacementTrack) throw new Error('The selected camera returned no video track.');
+				const replacedSenders = [];
+				try {
+					for (const peer of peers.values()) {
+						const sender = peer.cameraVideoTransceiver?.sender;
+						if (sender) {
+							await sender.replaceTrack(replacementTrack);
+							replacedSenders.push(sender);
+						}
+					}
+				} catch (error) {
+					for (const sender of replacedSenders) {
+						try { await sender.replaceTrack(null); } catch { /* The replacement track is stopped below. */ }
+					}
+					throw error;
+				}
+				localStream.addTrack(replacementTrack);
+				cameraEnabled = true;
+				preferredCameraDeviceId = replacementTrack.getSettings().deviceId || preferredCameraDeviceId;
+				cameraFacingMode = replacementTrack.getSettings().facingMode || cameraFacingMode;
+			} catch (error) {
+				replacementTrack?.stop();
+				showMeetingToast(error.name === 'NotAllowedError' ? 'Allow camera access to turn on your camera.' : 'Could not turn on the camera. Check that it is available and try again.', 'error');
+				return;
+			}
+		}
+
+		updateMediaControlsUI();
+		addVideo(localTileId, displayName, localStream, true);
+		publishMediaState();
+	} finally {
+		cameraToggleInProgress = false;
+		$('camera-button').disabled = false;
+		$('settings-camera-toggle').disabled = false;
+	}
 }
 
 async function monitorAudioDevices() {
@@ -1066,6 +1158,9 @@ async function startMeeting(event) {
 			if (error.name !== 'OverconstrainedError') throw error;
 			localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: microphoneConstraints });
 		}
+		const initialCameraTrack = localStream.getVideoTracks()[0];
+		cameraEnabled = Boolean(initialCameraTrack && initialCameraTrack.readyState === 'live');
+		preferredCameraDeviceId = initialCameraTrack?.getSettings().deviceId || null;
 		localTileId = socket.id || 'local';
 		participants.set(socket.id, { name: displayName, isHost: false, role: 'participant', mediaState: { audioMuted: false, videoMuted: false } });
 		addVideo(localTileId, displayName, localStream, true);
@@ -1171,6 +1266,7 @@ socket.on('host-status', (host) => {
 	}
 	$('host-panel').classList.add('hidden');
 	$('record-button').classList.toggle('hidden', !host);
+	updateMeetingSidebarLayout();
 	renderWaitingQueue(pendingQueue);
 	if (host) {
 		waitingScreen.classList.add('hidden');
@@ -1329,29 +1425,33 @@ $('mic-button').addEventListener('click', () => {
 	publishMediaState();
 });
 $('camera-button').addEventListener('click', () => {
-	const track = localStream?.getVideoTracks()[0];
-	if (!track) return;
-	track.enabled = !track.enabled;
-	$('camera-button').classList.toggle('muted', !track.enabled);
-	document.querySelector('#camera-button small').textContent = track.enabled ? 'Camera' : 'Video off';
-	$('settings-camera-toggle').checked = track.enabled;
-	publishMediaState();
+	setCameraEnabled(!isCameraEnabled());
 });
 $('switch-camera-button').addEventListener('click', async () => {
-	if (!localStream?.getVideoTracks().length) return showMeetingToast('Camera is not available.', 'error');
+	if (!localStream) return showMeetingToast('Camera is not available.', 'error');
 	const nextFacingMode = cameraFacingMode === 'user' ? 'environment' : 'user';
+	if (!isCameraEnabled()) {
+		cameraFacingMode = nextFacingMode;
+		preferredCameraDeviceId = null;
+		return showMeetingToast(`${cameraFacingMode === 'user' ? 'Front' : 'Back'} camera will be selected when you turn the camera on.`);
+	}
 	try {
 		const replacementStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: nextFacingMode } }, audio: false });
 		const replacementTrack = replacementStream.getVideoTracks()[0];
-		for (const { connection, screenVideoSender } of peers.values()) {
-			const sender = connection.getSenders().find((item) => item.track?.kind === 'video' && item !== screenVideoSender);
+		for (const peer of peers.values()) {
+			const sender = peer.cameraVideoTransceiver?.sender;
 			if (sender) await sender.replaceTrack(replacementTrack);
 		}
-		const oldTrack = localStream.getVideoTracks()[0];
+		const oldTrack = localStream.getVideoTracks().find((track) => track.readyState === 'live');
+		if (!oldTrack) {
+			replacementTrack.stop();
+			return showMeetingToast('Camera is not available.', 'error');
+		}
 		localStream.removeTrack(oldTrack);
 		localStream.addTrack(replacementTrack);
 		oldTrack.stop();
 		cameraFacingMode = nextFacingMode;
+		preferredCameraDeviceId = replacementTrack.getSettings().deviceId || null;
 		addVideo(localTileId, displayName, localStream, true);
 		showMeetingToast(cameraFacingMode === 'user' ? 'Front camera selected.' : 'Back camera selected.');
 	} catch (error) {
@@ -1442,6 +1542,7 @@ function setChatPanelOpen(isOpen) {
 		$('file-panel').classList.add('hidden');
 		setUtilityPanelOpen(false);
 	}
+	updateMeetingSidebarLayout();
 }
 
 function setHostPanelOpen(isOpen) {
@@ -1452,6 +1553,7 @@ function setHostPanelOpen(isOpen) {
 		$('file-panel').classList.add('hidden');
 		setUtilityPanelOpen(false);
 	}
+	updateMeetingSidebarLayout();
 }
 
 function setFilePanelOpen(isOpen) {
@@ -1461,6 +1563,15 @@ function setFilePanelOpen(isOpen) {
 		$('host-panel').classList.add('hidden');
 		setUtilityPanelOpen(false);
 	}
+	updateMeetingSidebarLayout();
+}
+
+function updateMeetingSidebarLayout() {
+	const isOpen = $('chat-panel').classList.contains('open')
+		|| !$('host-panel').classList.contains('hidden')
+		|| !$('file-panel').classList.contains('hidden');
+	document.querySelector('.meeting-body').classList.toggle('has-sidebar', isOpen);
+	applyDynamicVideoGridLayout();
 }
 
 $('header-chat-button').addEventListener('click', () => {
@@ -1503,7 +1614,8 @@ $('record-button').addEventListener('click', () => {
 	if (!isHost) return showMeetingToast('Only the host can record this meeting.', 'error');
 	if (recorder?.state === 'recording') return recorder.stop();
 	if (!window.MediaRecorder || !localStream) return showMeetingToast('Recording is not supported by this browser.', 'error');
-	const videoTrack = screenStream?.getVideoTracks()[0] || localStream.getVideoTracks()[0];
+	const videoTrack = screenStream?.getVideoTracks().find((track) => track.readyState === 'live')
+		|| localStream.getVideoTracks().find((track) => track.readyState === 'live' && track.enabled);
 	if (!videoTrack) return showMeetingToast('Turn on your camera or start presenting before recording.', 'error');
 	const recordStream = new MediaStream([videoTrack, ...localStream.getAudioTracks()]);
 	recordingChunks = [];
@@ -1587,6 +1699,7 @@ function setUtilityPanelOpen(isOpen) {
 		$('host-panel').classList.add('hidden');
 		$('file-panel').classList.add('hidden');
 	}
+	updateMeetingSidebarLayout();
 }
 function openSettingsPanel(focusId) {
 	setUtilityPanelOpen(true);
@@ -1674,6 +1787,11 @@ $('refresh-audio-button').addEventListener('click', getAudioDevices);
 
 async function replaceLocalDeviceTrack(kind, deviceId) {
 	if (!localStream) return;
+	if (kind === 'video' && !isCameraEnabled()) {
+		preferredCameraDeviceId = deviceId || null;
+		showMeetingToast(deviceId ? 'Camera selected. Turn on your camera to start video.' : 'Default camera selected. Turn on your camera to start video.');
+		return;
+	}
 	const oldTrack = localStream.getTracks().find((track) => track.kind === kind);
 	try {
 		const constraints = kind === 'audio'
@@ -1687,8 +1805,6 @@ async function replaceLocalDeviceTrack(kind, deviceId) {
 		for (const peer of peers.values()) {
 			const sender = kind === 'audio'
 				? peer.cameraAudioTransceiver?.sender
-				: oldTrack
-				? peer.connection.getSenders().find((item) => item.track === oldTrack)
 				: peer.cameraVideoTransceiver?.sender;
 			if (sender) await sender.replaceTrack(outgoingTrack);
 		}
@@ -1702,6 +1818,11 @@ async function replaceLocalDeviceTrack(kind, deviceId) {
 			oldTrack.stop();
 		}
 		localStream.addTrack(replacementTrack);
+		if (kind === 'video') {
+			cameraEnabled = true;
+			preferredCameraDeviceId = replacementTrack.getSettings().deviceId || deviceId || null;
+			cameraFacingMode = replacementTrack.getSettings().facingMode || cameraFacingMode;
+		}
 		const localVideo = document.querySelector(`#tile-${localTileId} video`);
 		if (localVideo) localVideo.srcObject = null;
 		addVideo(localTileId, displayName, localStream, true);
@@ -1728,13 +1849,7 @@ $('settings-mic-toggle')?.addEventListener('change', () => {
 });
 
 $('settings-camera-toggle')?.addEventListener('change', () => {
-	const track = localStream?.getVideoTracks()[0];
-	if (!track) return;
-	track.enabled = $('settings-camera-toggle').checked;
-	const cameraLabel = document.querySelector('#camera-button small');
-	if (cameraLabel) cameraLabel.textContent = track.enabled ? 'Camera' : 'Video off';
-	$('camera-button')?.classList.toggle('muted', !track.enabled);
-	publishMediaState();
+	setCameraEnabled($('settings-camera-toggle').checked);
 });
 
 $('video-effect-select').addEventListener('change', (event) => {
@@ -1746,6 +1861,7 @@ $('video-effect-select').addEventListener('change', (event) => {
 });
 
 let localCaptionText = '';
+let captionResults = [];
 const remoteCaptionTranscripts = new Map();
 const remoteCaptionTimers = new Map();
 let localCaptionTimer = null;
@@ -1760,8 +1876,8 @@ function renderCaptionDisplay() {
 socket.on('caption', ({ id, name, text, active }) => {
 	if (id === socket.id) return;
 	window.clearTimeout(remoteCaptionTimers.get(id));
-	if (active && text) {
-		remoteCaptionTranscripts.set(id, { name: name || 'Participant', text });
+	if (active && typeof text === 'string' && text.trim()) {
+		remoteCaptionTranscripts.set(id, { name: name || 'Participant', text: text.trim().slice(-500) });
 		remoteCaptionTimers.set(id, window.setTimeout(() => {
 			remoteCaptionTranscripts.delete(id);
 			remoteCaptionTimers.delete(id);
@@ -1774,17 +1890,6 @@ socket.on('caption', ({ id, name, text, active }) => {
 	renderCaptionDisplay();
 });
 
-async function ensureCaptionMicrophoneAccess() {
-	if (!navigator.mediaDevices?.getUserMedia) return false;
-	try {
-		const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-		stream.getTracks().forEach((track) => track.stop());
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 function stopLiveCaptions() {
 	captionsEnabled = false;
 	window.clearTimeout(captionRestartTimer);
@@ -1794,6 +1899,11 @@ function stopLiveCaptions() {
 	window.clearTimeout(localCaptionTimer);
 	localCaptionTimer = null;
 	localCaptionText = '';
+	captionResults = [];
+	captionNetworkWarningShown = false;
+	captionRestartDelay = 250;
+	$('captions-button').classList.remove('active');
+	$('captions-button').querySelector('strong').textContent = 'Captions';
 	renderCaptionDisplay();
 	if (socket.connected) socket.emit('caption', { active: false, text: '' });
 	try { recognition?.stop(); } catch { /* Recognition may already have ended. */ }
@@ -1805,35 +1915,69 @@ function startCaptionRecognition(Recognition) {
 	captionRecognition = recognition;
 	recognition.continuous = true;
 	recognition.interimResults = true;
-	recognition.lang = navigator.language || 'en-IN';
+	recognition.lang = captionLanguage;
+	captionResults = [];
+	recognition.onstart = () => {
+		captionRestartDelay = 250;
+	};
 	recognition.onresult = (resultEvent) => {
-		localCaptionText = [...resultEvent.results].slice(resultEvent.resultIndex).map((result) => result[0].transcript).join(' ').trim();
+		for (let index = resultEvent.resultIndex; index < resultEvent.results.length; index++) {
+			const result = resultEvent.results[index];
+			captionResults[index] = {
+				text: result[0].transcript.trim(),
+				isFinal: Boolean(result.isFinal),
+			};
+		}
+		captionResults.length = resultEvent.results.length;
+		localCaptionText = captionResults.map((result) => result?.text || '').filter(Boolean).join(' ').slice(-500).trim();
 		if (!localCaptionText) return;
+		captionNetworkWarningShown = false;
 		renderCaptionDisplay();
-		if (localCaptionText && socket.connected) socket.emit('caption', { active: true, text: localCaptionText });
+		if (socket.connected) socket.emit('caption', { active: true, text: localCaptionText });
 		window.clearTimeout(localCaptionTimer);
 		localCaptionTimer = window.setTimeout(() => {
 			localCaptionText = '';
+			captionResults = [];
 			renderCaptionDisplay();
 			if (socket.connected) socket.emit('caption', { active: false, text: '' });
 		}, 5000);
 	};
 	recognition.onerror = (event) => {
-		if (!['not-allowed', 'service-not-allowed', 'audio-capture'].includes(event.error)) return;
-		captionsEnabled = false;
-		$('settings-captions-toggle').checked = false;
-		window.clearTimeout(captionRestartTimer);
-		captionRestartTimer = null;
-		captionRecognition = null;
-		localCaptionText = '';
-		renderCaptionDisplay();
-		if (socket.connected) socket.emit('caption', { active: false, text: '' });
-		showMeetingToast(event.error === 'audio-capture' ? 'Captions cannot access your microphone.' : 'Allow speech recognition in your browser to use captions.', 'error');
+		const errorCode = event.error || 'unknown';
+		if (['not-allowed', 'service-not-allowed', 'audio-capture', 'language-not-supported'].includes(errorCode)) {
+			captionsEnabled = false;
+			$('settings-captions-toggle').checked = false;
+			$('captions-button').classList.remove('active');
+			$('captions-button').querySelector('strong').textContent = 'Captions';
+			window.clearTimeout(captionRestartTimer);
+			captionRestartTimer = null;
+			captionRecognition = null;
+			window.clearTimeout(localCaptionTimer);
+			localCaptionTimer = null;
+			localCaptionText = '';
+			captionResults = [];
+			renderCaptionDisplay();
+			if (socket.connected) socket.emit('caption', { active: false, text: '' });
+			const message = errorCode === 'audio-capture'
+				? 'Captions cannot access your microphone. Check that it is available.'
+				: errorCode === 'language-not-supported'
+					? 'This browser does not support the selected caption language.'
+					: 'Allow speech recognition in your browser to use captions.';
+			showMeetingToast(message, 'error');
+			return;
+		}
+		if (errorCode === 'network' && !captionNetworkWarningShown) {
+			captionNetworkWarningShown = true;
+			captionRestartDelay = 1500;
+			showMeetingToast('Speech recognition needs a working internet connection. Captions will retry.', 'error');
+		} else if (errorCode === 'no-speech') {
+			captionRestartDelay = 500;
+		}
 	};
 	recognition.onend = () => {
 		if (captionRecognition !== recognition) return;
 		captionRecognition = null;
-		if (captionsEnabled) captionRestartTimer = window.setTimeout(() => startCaptionRecognition(Recognition), 250);
+		if (captionsEnabled) captionRestartTimer = window.setTimeout(() => startCaptionRecognition(Recognition), captionRestartDelay);
 	};
 	try {
 		recognition.start();
@@ -1857,7 +2001,7 @@ $('close-settings').addEventListener('click', () => {
 	$('settings-section').classList.add('hidden');
 	$('utility-panel').classList.remove('show-settings');
 });
-$('settings-captions-toggle').addEventListener('change', async (event) => {
+$('settings-captions-toggle').addEventListener('change', (event) => {
 	const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 	if (!event.target.checked) {
 		stopLiveCaptions();
@@ -1868,20 +2012,39 @@ $('settings-captions-toggle').addEventListener('change', async (event) => {
 		showMeetingToast('Live captions are unavailable in this browser. Try Chrome or Edge.', 'error');
 		return;
 	}
-	const micReady = await ensureCaptionMicrophoneAccess();
-	if (!micReady) {
-		event.target.checked = false;
-		showMeetingToast('Allow microphone access to use live captions.', 'error');
-		return;
-	}
 	captionsEnabled = true;
 	try {
+		$('captions-button').classList.add('active');
+		$('captions-button').querySelector('strong').textContent = 'Stop captions';
 		startCaptionRecognition(Recognition);
 	} catch {
 		captionsEnabled = false;
 		event.target.checked = false;
+		$('captions-button').classList.remove('active');
+		$('captions-button').querySelector('strong').textContent = 'Captions';
 		showMeetingToast('Could not start live captions. Check microphone and browser permissions.', 'error');
 	}
+});
+$('settings-caption-language').addEventListener('change', (event) => {
+	captionLanguage = event.target.value;
+	if (!captionsEnabled) return;
+	const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+	if (!Recognition) return;
+	window.clearTimeout(captionRestartTimer);
+	captionRestartTimer = null;
+	const previousRecognition = captionRecognition;
+	captionRecognition = null;
+	try { previousRecognition?.stop(); } catch { /* Recognition may already have ended. */ }
+	captionRestartTimer = window.setTimeout(() => {
+		captionRestartTimer = null;
+		try {
+			startCaptionRecognition(Recognition);
+		} catch {
+			stopLiveCaptions();
+			$('settings-captions-toggle').checked = false;
+			showMeetingToast('Could not restart captions with the selected language.', 'error');
+		}
+	}, 300);
 });
 $('hide-video-tiles-toggle').addEventListener('change', (event) => {
 	hideVideoTiles = event.target.checked;
