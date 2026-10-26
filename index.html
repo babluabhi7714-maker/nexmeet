@@ -1,0 +1,161 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Gather | Video meeting</title>
+	<link rel="stylesheet" href="style.css">
+</head>
+<body>
+	<main id="join-screen" class="join-screen">
+		<header class="landing-header">
+			<div class="wordmark landing-mark"><span>G</span> gather</div>
+			<div class="landing-status"><span class="live-dot"></span> Video meetings, made simple</div>
+		</header>
+		<div class="join-copy">
+			<p class="eyebrow">A LITTLE CLOSER, FROM ANYWHERE</p>
+			<h1>Good to see<br><em>you here.</em></h1>
+			<p class="intro">Your next conversation is just a meeting link away.</p>
+		</div>
+		<section class="join-card">
+			<div class="join-card-heading"><div class="brand-mark">G</div><div><p class="eyebrow">WELCOME</p><h2>Join a meeting</h2></div></div>
+			<form id="join-form" class="join-form">
+			<label for="name">Your name</label>
+			<input id="name" name="name" autocomplete="name" placeholder="e.g. Alex Morgan" required maxlength="40">
+			<label for="room">Meeting link or code</label>
+			<input id="room" name="room" placeholder="Paste a link or enter a code" required maxlength="160">
+			<p id="join-error" class="error" role="alert"></p>
+			<button class="primary-button" type="submit">Join meeting <span aria-hidden="true">&#8594;</span></button>
+			</form>
+			<div class="join-divider"><span>or get started</span></div>
+			<div class="entry-actions">
+				<button id="new-meeting-button" class="secondary-button" type="button"><span aria-hidden="true">&#43;</span> New meeting</button>
+				<button id="get-link-button" class="secondary-button" type="button" title="Create and copy a meeting invite link"><span aria-hidden="true">&#128279;</span> Share meeting link</button>
+			</div>
+			<button id="schedule-button" class="schedule-link" type="button">Schedule a meeting <span aria-hidden="true">&#8594;</span></button>
+			<div id="invite-box" class="invite-box hidden"><label for="invite-link">Your meeting link</label><div class="invite-row"><input id="invite-link" readonly><button id="copy-invite-button" type="button">Copy</button></div><p>Share this link with your participants.</p></div>
+			<div id="schedule-fields" class="schedule-fields hidden">
+				<label for="schedule-title">Meeting title</label><input id="schedule-title" placeholder="Team sync">
+				<label for="schedule-date">Date and time</label><input id="schedule-date" type="datetime-local">
+				<button id="calendar-link-button" class="primary-button" type="button">Create calendar invite <span aria-hidden="true">&#8594;</span></button>
+			</div>
+		</section>
+	</main>
+
+	<main id="meeting-screen" class="meeting-screen hidden">
+		<header class="topbar">
+			<div class="wordmark"><span>G</span> gather</div>
+			<div class="room-label"><span class="live-dot"></span><span id="room-title"></span><span id="meeting-duration" class="meeting-duration" aria-label="Meeting duration">00:00</span><button id="copy-link-button" class="copy-link" type="button">Copy invite link</button></div>
+			<div class="status-row">
+				<div id="audio-device-status" class="audio-device-status hidden">
+					<span id="audio-device-icon">🎧</span>
+					<span id="audio-device-label">Headphones</span>
+				</div>
+				<div class="participant-count"><span id="participant-count">1</span> in room</div>
+				<div class="meeting-actions">
+					<button id="people-button" class="header-action" type="button" title="Show participants" aria-label="Show participants"><span>&#128101;</span><small>People</small><span id="waiting-count" class="waiting-count hidden" aria-label="People waiting to join">0</span></button>
+				</div>
+				<div class="profile-chip"><span id="displayName">Guest</span><span class="profile-avatar">G</span></div>
+			</div>
+		</header>
+		<section class="meeting-body">
+			<div id="video-grid" class="video-grid">
+				<div id="speaker-layout" class="speaker-layout hidden">
+					<div id="speaker-stage" class="speaker-stage"></div>
+					<div id="self-preview-layer" class="self-preview-layer" aria-label="Your video"></div>
+					<div id="participant-rail" class="participant-rail" aria-label="Other participants"></div>
+				</div>
+			</div>
+			<div class="sidebar-stack">
+				<aside id="chat-panel" class="chat-panel">
+					<div class="chat-header"><div><p class="eyebrow">ROOM CHAT</p><h2>Conversation</h2></div><button id="close-chat" class="icon-button" type="button" aria-label="Close chat">&#10005;</button></div>
+					<div id="messages" class="messages" aria-live="polite"></div>
+					<form id="chat-form" class="chat-form"><input id="chat-input" placeholder="Write a message..." maxlength="1000" autocomplete="off"><button type="submit" aria-label="Send message">&#8594;</button></form>
+				</aside>
+				<aside id="host-panel" class="host-panel hidden">
+					<div class="chat-header"><div><p class="eyebrow">HOST CONTROLS</p><h2>Participants</h2></div><button id="close-host" class="icon-button" type="button" aria-label="Close host controls">&#10005;</button></div>
+					<div id="waiting-queue" class="waiting-queue hidden">
+						<p class="eyebrow">WAITING FOR APPROVAL</p>
+						<div id="pending-users"></div>
+					</div>
+					<div id="participant-list" class="participant-list"></div>
+				</aside>
+				<aside id="file-panel" class="file-panel hidden">
+					<div class="chat-header"><div><p class="eyebrow">FILE SHARING</p><h2>Files</h2></div><button id="close-files" class="icon-button" type="button" aria-label="Close files">&#10005;</button></div>
+					<div id="file-requests" class="file-list"></div>
+					<div id="active-transfers" class="file-list"></div>
+				</aside>
+			</div>
+			<aside id="utility-panel" class="utility-panel hidden" aria-label="More meeting controls">
+				<div class="more-sheet-header"><div><p class="eyebrow">GATHER MEETING</p><h2>More</h2></div><button id="close-utility" class="icon-button" type="button" aria-label="Close more options">&#10005;</button></div>
+				<div class="more-grid">
+					<button id="reactions-button" class="more-tile utility-action" type="button"><span class="more-icon">&#9786;</span><strong>Reactions</strong><small>Send a reaction</small></button>
+					<button id="share-button" class="more-tile utility-action" type="button" title="Present your screen"><span class="more-icon">&#8593;</span><strong>Present now</strong><small>Share your screen</small></button>
+					<button id="captions-button" class="more-tile" type="button"><span class="more-icon">CC</span><strong>Captions</strong></button>
+					<button id="audio-button" class="more-tile" type="button"><span class="more-icon">&#128266;</span><strong>Audio/Video</strong></button>
+					<button id="settings-button" class="more-tile" type="button"><span class="more-icon">&#9881;</span><strong>Settings</strong></button>
+					<button id="report-button" class="more-tile" type="button" aria-expanded="false" aria-controls="report-section"><span class="more-icon">&#9888;</span><strong>Report abuse</strong></button>
+				</div>
+				<section id="settings-section" class="settings-section hidden" aria-label="Meeting settings">
+					<div class="settings-heading"><div><p class="eyebrow">MEETING SETTINGS</p><h3>Settings</h3></div><div class="settings-heading-actions"><button id="close-settings" class="icon-button" type="button" aria-label="Back to more options">&#8592;</button></div></div>
+					<div class="settings-group"><h4>VIDEO</h4><label class="settings-option"><span><strong>Don't show video in tiles</strong><small>Watch only presentations</small></span><input id="hide-video-tiles-toggle" type="checkbox"><i></i></label></div>
+					<div id="settings-audio-video-group" class="settings-group"><h4>AUDIO &amp; VIDEO</h4>
+						<label class="settings-option"><span><strong>Microphone</strong><small>Turn your mic on or off</small></span><input id="settings-mic-toggle" type="checkbox" checked><i></i></label>
+						<div class="settings-select-wrap"><label for="settings-input-select">Microphone</label><select id="settings-input-select"><option value="">Default microphone</option></select></div>
+						<label class="settings-option"><span><strong>Camera</strong><small>Turn your camera on or off</small></span><input id="settings-camera-toggle" type="checkbox" checked><i></i></label>
+						<div class="settings-select-wrap"><label for="settings-camera-select">Camera</label><select id="settings-camera-select"><option value="">Default camera</option></select></div>
+						<div class="settings-select-wrap">
+							<label for="settings-output-select">Speaker</label>
+							<select id="settings-output-select"><option value="">Default speaker</option></select>
+						</div>
+						<button id="refresh-audio-button" class="secondary-button compact-button" type="button">Refresh devices</button>
+					</div>
+					<div class="settings-group"><h4>GENERAL</h4><button id="settings-host-controls" class="settings-link" type="button"><span>Host controls</span><span>&#8250;</span></button><button id="settings-feedback" class="settings-link" type="button"><span>Send feedback</span><span>&#8250;</span></button></div>
+					<div class="settings-group"><h4>CAPTIONS</h4><label class="settings-option"><span><strong>Live captions</strong><small>Captions for your speech. Requires Chrome or Edge, a secure connection, microphone permission, and internet access.</small></span><input id="settings-captions-toggle" type="checkbox"><i></i></label><div class="settings-select-wrap"><label for="settings-caption-language">Caption language</label><select id="settings-caption-language"><option value="en-IN" selected>English (India)</option><option value="en-US">English (United States)</option><option value="en-GB">English (United Kingdom)</option><option value="hi-IN">Hindi (India)</option><option value="ta-IN">Tamil (India)</option><option value="te-IN">Telugu (India)</option></select></div></div>
+					<div class="settings-group"><h4>REACTIONS</h4><label class="settings-option"><span><strong>Show reactions from others</strong><small>When off, your own reactions still appear</small></span><input id="show-reactions-toggle" type="checkbox" checked><i></i></label><label class="settings-option"><span><strong>Animation</strong><small>Show floating reaction animations</small></span><input id="reaction-animation-toggle" type="checkbox" checked><i></i></label></div>
+				</section>
+				<div class="more-secondary-actions">
+					<button id="switch-camera-button" class="secondary-button compact-button" type="button">Switch camera</button>
+					<button id="fullscreenBtn" class="secondary-button compact-button" type="button">Fullscreen</button>
+					<button id="record-button" class="secondary-button compact-button" type="button"><span class="more-icon">&#9210;</span><small>Record</small></button>
+					<button id="file-button" class="secondary-button compact-button hidden" type="button">Files</button>
+				</div>
+				<section class="utility-section"><h3>Invite people</h3><p class="panel-hint">Copy the meeting link or send an email invitation.</p><div class="invite-row"><input id="invite-email" type="email" placeholder="name@example.com" autocomplete="email"><button id="email-invite-button" type="button">Email</button></div><button id="copy-meeting-invite" class="secondary-button compact-button" type="button">Copy meeting link</button></section>
+				<section class="utility-section"><h3>Video effects</h3><label for="video-effect-select">Camera effect</label><select id="video-effect-select"><option value="none">None</option><option value="soft-blur">Soft blur</option><option value="dim">Dim</option><option value="contrast">High contrast</option></select></section>
+				<section id="report-section" class="utility-section hidden"><label for="report-text">What went wrong?</label><textarea id="report-text" rows="3" maxlength="500" placeholder="Tell us what happened"></textarea><button id="send-report-button" class="primary-button compact-button" type="button">Send report</button></section>
+			</aside>
+			<div id="reaction-picker" class="reaction-picker hidden" aria-label="Reactions"><button type="button" data-reaction="&#128077;">&#128077;</button><button type="button" data-reaction="&#10084;&#65039;">&#10084;&#65039;</button><button type="button" data-reaction="&#128514;">&#128514;</button><button type="button" data-reaction="&#128558;">&#128558;</button><button type="button" data-reaction="&#128546;">&#128546;</button><button type="button" data-reaction="&#128079;">&#128079;</button><button type="button" data-reaction="&#127881;">&#127881;</button></div>
+			<div id="reaction-layer" class="reaction-layer" aria-live="polite"></div>
+			<div id="caption-display" class="caption-display hidden" aria-live="polite"></div>
+			<p id="meeting-error" class="meeting-error" role="alert"></p>
+		</section>
+		<footer class="controls">
+			<div class="control-group control-group-primary">
+				<button id="mic-button" class="control-button" type="button" aria-label="Microphone"><span>&#127908;</span><small>Microphone</small></button>
+				<button id="camera-button" class="control-button" type="button" aria-label="Camera"><span>&#128249;</span><small>Camera</small></button>
+				<button id="hand-button" class="control-button" type="button" title="Raise hand"><span>&#9995;</span><small>Raise hand</small></button>
+				<button id="header-chat-button" class="control-button" type="button" title="Open chat" aria-label="Open chat"><span>&#128172;</span><small>Chat</small></button>
+				<button id="more-button" class="control-button" type="button" title="More meeting options"><span>&#8942;</span><small>More</small></button>
+				<button id="leave-button" class="control-button leave" type="button"><span>&#10140;</span><small>Leave</small></button>
+			</div>
+		</footer>
+		<div id="meeting-notifications" class="meeting-notifications" aria-live="polite"></div>
+	</main>
+
+	<main id="waiting-screen" class="waiting-screen hidden">
+		<div class="waiting-card">
+			<div class="brand-mark">G</div>
+			<h2>Waiting for host approval</h2>
+			<p id="waiting-message">The host will notify you when you can join the meeting.</p>
+			<button id="cancel-wait-button" class="secondary-button" type="button">Cancel</button>
+		</div>
+	</main>
+	<script src="/socket.io/socket.io.js"></script>
+	<script src="script.js"></script>
+	<div id="waiting-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #202124; color: white; justify-content: center; align-items: center; z-index: 9999; flex-direction: column; text-align: center;">
+    <h2>Waiting for the host to let you in...</h2>
+    <p>Please stay on this screen. The host will admit you shortly.</p>
+</div>
+</body>
+</html>
