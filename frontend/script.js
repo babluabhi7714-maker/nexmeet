@@ -1514,7 +1514,9 @@ $('share-button').addEventListener('click', async () => {
 		setActiveSpeaker(presentationId);
 		track.onended = stopSharing;
 		$('share-button').classList.add('active');
-		document.querySelector('#share-button small').textContent = 'Stop sharing';
+		$('share-button').title = 'Stop presenting';
+		$('share-button').setAttribute('aria-label', 'Stop presenting');
+		document.querySelector('#share-button small').textContent = 'Stop';
 		socket.emit('presentation-start');
 	} catch (error) {
 		if (error.name === 'AbortError' || error.name === 'NotAllowedError') return;
@@ -1541,7 +1543,9 @@ function stopSharing() {
 	addVideo(localTileId, displayName, localStream, true);
 	setActiveSpeaker(chooseFallbackSpeaker());
 	$('share-button').classList.remove('active');
-	document.querySelector('#share-button small').textContent = 'Share screen';
+	$('share-button').title = 'Present your screen';
+	$('share-button').setAttribute('aria-label', 'Present your screen');
+	document.querySelector('#share-button small').textContent = 'Present';
 	showMeetingToast('Screen sharing stopped.');
 	if (isPresenter && isHost) {
 		isPresenter = false;
@@ -1735,6 +1739,13 @@ function openSettingsPanel(focusId) {
 }
 $('more-button').addEventListener('click', () => setUtilityPanelOpen(utilityPanel.classList.contains('hidden')));
 $('close-utility').addEventListener('click', () => setUtilityPanelOpen(false));
+$('email-invite-open').addEventListener('click', () => {
+	setUtilityPanelOpen(true);
+	window.setTimeout(() => {
+		$('invite-people-section').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		$('invite-email').focus();
+	}, 0);
+});
 
 $('reactions-button').addEventListener('click', () => {
 	setUtilityPanelOpen(false);
