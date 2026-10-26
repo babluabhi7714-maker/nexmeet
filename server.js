@@ -108,6 +108,7 @@ const rooms = new Map();
 const waitingQueues = new Map();
 const roomSettings = new Map();
 const reconnectSessions = new Map();
+const activePresentations = new Map();
 
 function getReconnectSessionKey(roomId, token) {
 	return `${roomId}\0${token}`;
@@ -312,13 +313,23 @@ io.on('connection', (socket) => {
 	});
 
 	socket.on('presentation-start', () => {
-		const room = rooms.get(socket.data.roomId);
-		if (room?.has(socket.id)) io.to(socket.data.roomId).emit('presentation-started', { id: socket.id, name: socket.data.name || 'A participant' });
+		const roomId = socket.data.roomId;
+		const room = rooms.get(roomId);
+		if (!room?.has(socket.id)) return;
+		const currentPresenterId = activePresentations.get(roomId);
+		if (currentPresenterId && currentPresenterId !== socket.id) {
+			return socket.emit('presentation-denied', { name: room.get(currentPresenterId)?.name || 'Another participant' });
+		}
+		activePresentations.set(roomId, socket.id);
+		io.to(roomId).emit('presentation-started', { id: socket.id, name: socket.data.name || 'A participant' });
 	});
 
 	socket.on('presentation-stop', () => {
-		const room = rooms.get(socket.data.roomId);
-		if (room?.has(socket.id)) io.to(socket.data.roomId).emit('presentation-stopped', { id: socket.id });
+		const roomId = socket.data.roomId;
+		const room = rooms.get(roomId);
+		if (!room?.has(socket.id) || activePresentations.get(roomId) !== socket.id) return;
+		activePresentations.delete(roomId);
+		io.to(roomId).emit('presentation-stopped', { id: socket.id });
 	});
 
 	socket.on('chat-message', (text) => {
@@ -400,6 +411,10 @@ io.on('connection', (socket) => {
 		if (!room?.has(socket.id)) return;
 		const wasHost = room.get(socket.id)?.isHost;
 		const participant = room.get(socket.id);
+		if (activePresentations.get(roomId) === socket.id) {
+			activePresentations.delete(roomId);
+			io.to(roomId).emit('presentation-stopped', { id: socket.id });
+		}
 		if (participant && socket.data.reconnectToken) {
 			const reconnectKey = getReconnectSessionKey(roomId, socket.data.reconnectToken);
 			clearReconnectSession(reconnectKey);
@@ -425,6 +440,7 @@ io.on('connection', (socket) => {
 			rooms.delete(roomId);
 			waitingQueues.delete(roomId);
 			roomSettings.delete(roomId);
+			activePresentations.delete(roomId);
 		}
 	});
 });

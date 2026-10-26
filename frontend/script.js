@@ -1248,6 +1248,11 @@ socket.on('presentation-stopped', ({ id }) => {
 	if (activeSpeakerId === presentationId) setActiveSpeaker(chooseFallbackSpeaker(presentationId));
 	updateCount();
 });
+socket.on('presentation-denied', ({ name }) => {
+	if (!screenStream) return;
+	stopSharing(false);
+	showMeetingToast(`${name || 'Another participant'} is already presenting. Wait until they stop before sharing.`, 'error');
+});
 socket.on('presentation-started', ({ id }) => {
 	activePresentations.add(id);
 	showRemotePresentation(id);
@@ -1529,7 +1534,7 @@ $('share-button').addEventListener('click', async () => {
 		showMeetingToast(message, 'error');
 	}
 });
-function stopSharing() {
+function stopSharing(showToast = true) {
 	for (const { screenVideoSender, screenAudioSender } of peers.values()) {
 		screenVideoSender?.replaceTrack(null).catch(() => {});
 		screenAudioSender?.replaceTrack(null).catch(() => {});
@@ -1546,7 +1551,7 @@ function stopSharing() {
 	$('share-button').title = 'Present your screen';
 	$('share-button').setAttribute('aria-label', 'Present your screen');
 	document.querySelector('#share-button small').textContent = 'Present';
-	showMeetingToast('Screen sharing stopped.');
+	if (showToast) showMeetingToast('Screen sharing stopped.');
 	if (isPresenter && isHost) {
 		isPresenter = false;
 		socket.emit('participant-role-changed', { id: socket.id, role: 'participant' });
