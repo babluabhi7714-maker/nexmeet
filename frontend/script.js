@@ -1739,13 +1739,6 @@ function openSettingsPanel(focusId) {
 }
 $('more-button').addEventListener('click', () => setUtilityPanelOpen(utilityPanel.classList.contains('hidden')));
 $('close-utility').addEventListener('click', () => setUtilityPanelOpen(false));
-$('email-invite-open').addEventListener('click', () => {
-	setUtilityPanelOpen(true);
-	window.setTimeout(() => {
-		$('invite-people-section').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-		$('invite-email').focus();
-	}, 0);
-});
 
 $('reactions-button').addEventListener('click', () => {
 	setUtilityPanelOpen(false);
