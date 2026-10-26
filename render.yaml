@@ -19,7 +19,7 @@ services:
         sync: false
       - key: TURN_CREDENTIAL
         sync: false
-      - key: RESEND_API_KEY
+      - key: GMAIL_USER
         sync: false
-      - key: RESEND_FROM_EMAIL
+      - key: GMAIL_APP_PASSWORD
         sync: false

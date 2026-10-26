@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const express = require('express');
+const nodemailer = require('nodemailer');
 const { Server } = require('socket.io');
 
 const app = express();
@@ -44,8 +45,10 @@ app.post('/api/invite', async (req, res) => {
 		return res.status(400).json({ error: 'Enter a valid email address.' });
 	}
 	if (!roomId) return res.status(400).json({ error: 'The meeting room is missing.' });
-	if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) {
-		return res.status(503).json({ error: 'Email delivery is not configured yet. Add the Resend settings in Render.' });
+	const gmailUser = String(process.env.GMAIL_USER || '').trim();
+	const gmailAppPassword = String(process.env.GMAIL_APP_PASSWORD || '').replace(/\s/g, '');
+	if (!gmailUser || !gmailAppPassword) {
+		return res.status(503).json({ error: 'Gmail delivery is not configured yet. Add the Gmail settings in Render.' });
 	}
 	const now = Date.now();
 	for (const [address, timestamps] of inviteAttempts) {
@@ -61,28 +64,24 @@ app.post('/api/invite', async (req, res) => {
 	const safeRoomId = escapeHtml(roomId);
 	const safeMeetingUrl = escapeHtml(meetingUrl);
 	try {
-		const providerResponse = await fetch('https://api.resend.com/emails', {
-			method: 'POST',
-			headers: {
-				Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify({
-				from: process.env.RESEND_FROM_EMAIL,
-				to: [email],
-				subject: `Invitation to ${roomId}`,
-				text: `You are invited to ${roomId}. Join the meeting: ${meetingUrl}`,
-				html: `<p>You are invited to <strong>${safeRoomId}</strong>.</p><p><a href="${safeMeetingUrl}">Join the meeting</a></p>`,
-			}),
+		const transporter = nodemailer.createTransport({
+			host: 'smtp.gmail.com',
+			port: 465,
+			secure: true,
+			auth: { user: gmailUser, pass: gmailAppPassword },
 		});
-		if (!providerResponse.ok) {
-			console.error(`[email-invite] Provider rejected request with status ${providerResponse.status}.`);
-			return res.status(502).json({ error: 'The email provider could not send the invite. Check the sender settings.' });
-		}
+		const safeSubjectRoom = roomId.replace(/[\r\n]+/g, ' ');
+		await transporter.sendMail({
+			from: { name: 'Gather Meetings', address: gmailUser },
+			to: email,
+			subject: `Invitation to ${safeSubjectRoom}`,
+			text: `You are invited to ${safeSubjectRoom}. Join the meeting: ${meetingUrl}`,
+			html: `<p>You are invited to <strong>${safeRoomId}</strong>.</p><p><a href="${safeMeetingUrl}">Join the meeting</a></p>`,
+		});
 		return res.json({ sent: true });
 	} catch (error) {
-		console.error('[email-invite] Provider request failed.', error.message);
-		return res.status(502).json({ error: 'Email delivery failed. Please try again later.' });
+		console.error('[email-invite] Gmail SMTP send failed.', error.message);
+		return res.status(502).json({ error: 'Gmail could not send the invite. Check the Gmail app password and try again.' });
 	}
 });
 app.get('/api/ice-servers', (req, res) => {
@@ -120,6 +119,14 @@ function clearReconnectSession(key) {
 	reconnectSessions.delete(key);
 }
 
+function syncActivePresentation(roomId, targetId) {
+	const presenterId = activePresentations.get(roomId);
+	const presenter = rooms.get(roomId)?.get(presenterId);
+	if (presenterId && presenter) {
+		io.to(targetId).emit('presentation-started', { id: presenterId, name: presenter.name || 'A participant' });
+	}
+}
+
 io.on('connection', (socket) => {
 	socket.on('join-room', ({ roomId, name, email, reconnectToken }, acknowledge) => {
 		const cleanRoomId = String(roomId || '').trim().slice(0, 80);
@@ -153,6 +160,7 @@ io.on('connection', (socket) => {
 			socket.emit('waiting-queue', [...(waitingQueues.get(cleanRoomId) || new Map()).entries()].map(([id, user]) => ({ id, ...user })));
 			socket.emit('room-settings', roomSettings.get(cleanRoomId));
 			socket.emit('approval-granted');
+			syncActivePresentation(cleanRoomId, socket.id);
 			acknowledge?.({ state: 'approved', host: isHost, reconnected: true });
 			socket.to(cleanRoomId).emit('user-joined', { id: socket.id, name: cleanName, email: cleanEmail });
 			return;
@@ -188,6 +196,7 @@ io.on('connection', (socket) => {
 				socket.data.state = 'approved';
 				socket.emit('room-users', [...room.entries()].filter(([id]) => id !== socket.id).map(([id, participant]) => ({ id, ...participant })));
 				socket.emit('approval-granted');
+				syncActivePresentation(cleanRoomId, socket.id);
 				acknowledge?.({ state: 'approved', host: false });
 				socket.to(cleanRoomId).emit('user-joined', { id: socket.id, name: cleanName, email: cleanEmail });
 				return;
@@ -242,6 +251,7 @@ io.on('connection', (socket) => {
 				io.to(target).emit('approval-granted');
 				const peers = [...room.entries()].filter(([id]) => id !== target).map(([id, p]) => ({ id, ...p }));
 				io.to(target).emit('room-users', peers);
+				syncActivePresentation(socket.data.roomId, target);
 				const queueList = [...waitingQueue.entries()].map(([id, user]) => ({ id, ...user }));
 				io.to(socket.data.roomId).emit('waiting-queue', queueList);
 				approvedSocket.to(socket.data.roomId).emit('user-joined', { id: target, name: pendingUser.name, email: pendingUser.email });

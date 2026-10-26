@@ -886,7 +886,10 @@ async function createPeerConnection(id, name, initiator) {
 	if (screenStream) {
 		const sharedVideo = screenStream.getVideoTracks()[0];
 		const sharedAudio = screenStream.getAudioTracks()[0];
-		if (sharedVideo) await screenVideoTransceiver.sender.replaceTrack(sharedVideo);
+		if (sharedVideo) {
+			await screenVideoTransceiver.sender.replaceTrack(sharedVideo);
+			await configureScreenShareSender(screenVideoTransceiver.sender);
+		}
 		if (sharedAudio) await screenAudioTransceiver.sender.replaceTrack(sharedAudio);
 	}
 	if (generation !== peerGeneration) {
@@ -1499,13 +1502,18 @@ $('share-button').addEventListener('click', async () => {
 	const getDisplayMedia = navigator.mediaDevices?.getDisplayMedia?.bind(navigator.mediaDevices) || navigator.getDisplayMedia?.bind(navigator);
 	if (!getDisplayMedia) return showMeetingToast('This browser does not support screen sharing.', 'error');
 	try {
-		screenStream = await getDisplayMedia({ video: true, audio: true });
+		screenStream = await getDisplayMedia({
+			video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } },
+			audio: true,
+		});
 		setActiveSpeaker(null);
 		const track = screenStream.getVideoTracks()[0];
 		if (!track) throw new Error('The browser returned no screen video track.');
+		track.contentHint = 'detail';
 		const sharedAudioTrack = screenStream.getAudioTracks()[0];
 		for (const { screenVideoSender, screenAudioSender } of peers.values()) {
 			await screenVideoSender?.replaceTrack(track);
+			if (screenVideoSender) await configureScreenShareSender(screenVideoSender);
 			await screenAudioSender?.replaceTrack(sharedAudioTrack || null);
 		}
 		if (sharedAudioTrack) {
@@ -1534,6 +1542,17 @@ $('share-button').addEventListener('click', async () => {
 		showMeetingToast(message, 'error');
 	}
 });
+async function configureScreenShareSender(sender) {
+	try {
+		const parameters = sender.getParameters();
+		parameters.degradationPreference = 'maintain-resolution';
+		if (parameters.encodings?.length) {
+			parameters.encodings[0].maxBitrate = 4_000_000;
+			parameters.encodings[0].maxFramerate = 30;
+		}
+		await sender.setParameters(parameters);
+	} catch {}
+}
 function stopSharing(showToast = true) {
 	for (const { screenVideoSender, screenAudioSender } of peers.values()) {
 		screenVideoSender?.replaceTrack(null).catch(() => {});
