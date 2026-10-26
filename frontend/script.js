@@ -573,19 +573,29 @@ function applyDynamicVideoGridLayout() {
 	if (!videoGrid || videoGrid.classList.contains('active-speaker-mode')) return;
 	const visibleTiles = [...videoGrid.querySelectorAll('.video-tile')].filter((tile) => tile.offsetParent !== null && !tile.classList.contains('presentation-tile'));
 	const count = Math.max(visibleTiles.length, 1);
-	let columns = 1;
-	if (count === 2) columns = 2;
-	else if (count >= 3 && count <= 4) columns = 2;
-	else if (count >= 5 && count <= 6) columns = 3;
-	else if (count >= 7) columns = Math.min(4, Math.ceil(Math.sqrt(count)));
-	const rows = Math.ceil(count / columns);
 	const gap = 10;
 	const availableWidth = videoGrid.clientWidth || 960;
 	const availableHeight = videoGrid.clientHeight || 540;
+	const aspectRatio = 16 / 9;
+	let columns = 1;
+	let rows = count;
+	let largestTileArea = 0;
+	for (let candidateColumns = 1; candidateColumns <= count; candidateColumns++) {
+		const candidateRows = Math.ceil(count / candidateColumns);
+		const columnWidth = (availableWidth - gap * (candidateColumns - 1)) / candidateColumns;
+		const rowHeight = (availableHeight - gap * (candidateRows - 1)) / candidateRows;
+		const tileWidth = Math.min(columnWidth, rowHeight * aspectRatio);
+		const tileArea = tileWidth * (tileWidth / aspectRatio);
+		if (tileArea > largestTileArea) {
+			largestTileArea = tileArea;
+			columns = candidateColumns;
+			rows = candidateRows;
+		}
+	}
 	const columnWidth = (availableWidth - gap * (columns - 1)) / columns;
 	const rowSpace = (availableHeight - gap * (rows - 1)) / rows;
 	const minTileHeight = Math.min(window.innerWidth <= 520 ? 82 : window.innerWidth <= 900 ? 104 : 120, columnWidth * 9 / 16);
-	const tileHeight = Math.floor(Math.min(columnWidth * 9 / 16, rowSpace));
+	const tileHeight = Math.floor(Math.min(columnWidth / aspectRatio, rowSpace));
 	const needsScroll = tileHeight < minTileHeight;
 	const finalTileHeight = needsScroll ? minTileHeight : tileHeight;
 	const finalTileWidth = Math.floor(finalTileHeight * 16 / 9);
