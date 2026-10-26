@@ -2013,12 +2013,28 @@ function startCaptionRecognition(Recognition) {
 	}
 }
 
-$('email-invite-button').addEventListener('click', () => {
+$('email-invite-button').addEventListener('click', async () => {
 	const email = $('invite-email').value.trim();
 	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showMeetingToast('Enter a valid email address.', 'error');
-	const subject = encodeURIComponent(`Invite to ${currentRoom || 'Gather meeting'}`);
-	const body = encodeURIComponent(`Join my meeting: ${meetingLink()}`);
-	window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+	const button = $('email-invite-button');
+	button.disabled = true;
+	button.textContent = 'Sending…';
+	try {
+		const response = await fetch('/api/invite', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email, roomId: currentRoom }),
+		});
+		const result = await response.json().catch(() => ({}));
+		if (!response.ok) throw new Error(result.error || 'Could not send the email invite.');
+		$('invite-email').value = '';
+		showMeetingToast('Meeting invite sent by email.', 'success');
+	} catch (error) {
+		showMeetingToast(error.message || 'Could not send the email invite.', 'error');
+	} finally {
+		button.disabled = false;
+		button.textContent = 'Send invite';
+	}
 });
 $('settings-button').addEventListener('click', () => {
 	openSettingsPanel();

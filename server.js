@@ -9,6 +9,8 @@ const server = http.createServer(app);
 const io = new Server(server, {
 	cors: { origin: true, credentials: true }
 });
+app.set('trust proxy', 1);
+app.use(express.json({ limit: '10kb' }));
 
 const frontendCandidates = [
 	path.join(__dirname, 'frontend'),
@@ -21,6 +23,68 @@ const frontendPath = frontendCandidates.find((candidate) => fs.existsSync(path.j
 if (!frontendPath) throw new Error('Could not locate the frontend index.html. Set the Render root directory to the repository root.');
 app.use(express.static(frontendPath));
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+const inviteAttempts = new Map();
+const inviteWindowMs = 10 * 60 * 1000;
+function escapeHtml(value) {
+	return value.replace(/[&<>\"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' })[character]);
+}
+app.post('/api/invite', async (req, res) => {
+	let requestOrigin;
+	try {
+		requestOrigin = new URL(req.get('origin'));
+	} catch {
+		return res.status(403).json({ error: 'Invalid request origin.' });
+	}
+	if (requestOrigin.host !== req.get('host') || !['https:', 'http:'].includes(requestOrigin.protocol)) {
+		return res.status(403).json({ error: 'Invalid request origin.' });
+	}
+	const email = String(req.body?.email || '').trim();
+	const roomId = String(req.body?.roomId || '').trim().slice(0, 80);
+	if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+		return res.status(400).json({ error: 'Enter a valid email address.' });
+	}
+	if (!roomId) return res.status(400).json({ error: 'The meeting room is missing.' });
+	if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) {
+		return res.status(503).json({ error: 'Email delivery is not configured yet. Add the Resend settings in Render.' });
+	}
+	const now = Date.now();
+	for (const [address, timestamps] of inviteAttempts) {
+		const recent = timestamps.filter((timestamp) => now - timestamp < inviteWindowMs);
+		if (recent.length) inviteAttempts.set(address, recent);
+		else inviteAttempts.delete(address);
+	}
+	const clientAddress = req.ip || req.socket.remoteAddress || 'unknown';
+	const recentAttempts = inviteAttempts.get(clientAddress) || [];
+	if (recentAttempts.length >= 5) return res.status(429).json({ error: 'Too many invites sent. Please try again later.' });
+	inviteAttempts.set(clientAddress, [...recentAttempts, now]);
+	const meetingUrl = new URL(`/?room=${encodeURIComponent(roomId)}`, requestOrigin.origin).toString();
+	const safeRoomId = escapeHtml(roomId);
+	const safeMeetingUrl = escapeHtml(meetingUrl);
+	try {
+		const providerResponse = await fetch('https://api.resend.com/emails', {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				from: process.env.RESEND_FROM_EMAIL,
+				to: [email],
+				subject: `Invitation to ${roomId}`,
+				text: `You are invited to ${roomId}. Join the meeting: ${meetingUrl}`,
+				html: `<p>You are invited to <strong>${safeRoomId}</strong>.</p><p><a href="${safeMeetingUrl}">Join the meeting</a></p>`,
+			}),
+		});
+		if (!providerResponse.ok) {
+			console.error(`[email-invite] Provider rejected request with status ${providerResponse.status}.`);
+			return res.status(502).json({ error: 'The email provider could not send the invite. Check the sender settings.' });
+		}
+		return res.json({ sent: true });
+	} catch (error) {
+		console.error('[email-invite] Provider request failed.', error.message);
+		return res.status(502).json({ error: 'Email delivery failed. Please try again later.' });
+	}
+});
 app.get('/api/ice-servers', (req, res) => {
 	const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
 	if (process.env.TURN_URL && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
