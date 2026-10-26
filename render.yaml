@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     repo: https://github.com/babluabhi7714-maker/nexmeet.git
-    branch: main
+    branch: workspace-project
     autoDeployTrigger: commit
     rootDir: .
     buildCommand: npm install
