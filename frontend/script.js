@@ -676,12 +676,22 @@ function renderParticipants() {
 	for (const [id, participant] of participants) {
 		const row = document.createElement('div');
 		row.className = 'participant-row';
+		const identity = document.createElement('div');
+		identity.className = 'participant-identity';
 		const label = document.createElement('span');
 		label.className = 'participant-name';
-		const muteStatus = participant.mediaState?.audioMuted ? ' · 🔇' : '';
-		const videoStatus = participant.mediaState?.videoMuted ? ' · 📹' : '';
-		label.textContent = `${participant.name}${id === socket.id ? ' (You)' : ''}${participant.isHost ? ' · Host' : ''}${participant.role === 'presenter' ? ' · Presenter' : ''}${muteStatus}${videoStatus}`;
-		row.appendChild(label);
+		label.textContent = `${participant.name}${id === socket.id ? ' (You)' : ''}`;
+		const details = document.createElement('span');
+		details.className = 'participant-details';
+		details.textContent = [
+			participant.isHost ? 'Host' : '',
+			participant.role === 'presenter' ? 'Presenter' : '',
+			participant.mediaState?.audioMuted ? 'Mic off' : '',
+			participant.mediaState?.videoMuted ? 'Camera off' : '',
+		].filter(Boolean).join(' · ');
+		identity.append(label, details);
+		row.appendChild(identity);
+		row.classList.toggle('has-details', Boolean(details.textContent));
 		if (isHost && id !== socket.id && !participant.isHost) {
 			const actions = document.createElement('div');
 			actions.className = 'participant-actions';
@@ -1962,7 +1972,9 @@ function startCaptionRecognition(Recognition) {
 				? 'Captions cannot access your microphone. Check that it is available.'
 				: errorCode === 'language-not-supported'
 					? 'This browser does not support the selected caption language.'
-					: 'Allow speech recognition in your browser to use captions.';
+					: errorCode === 'service-not-allowed'
+						? 'The browser speech recognition service is unavailable. Try Chrome or Edge again later.'
+						: 'Allow speech recognition in your browser to use captions.';
 			showMeetingToast(message, 'error');
 			return;
 		}
@@ -2007,6 +2019,11 @@ $('settings-captions-toggle').addEventListener('change', (event) => {
 		stopLiveCaptions();
 		return;
 	}
+	if (!window.isSecureContext) {
+		event.target.checked = false;
+		showMeetingToast('Live captions require a secure connection (HTTPS or localhost).', 'error');
+		return;
+	}
 	if (!Recognition) {
 		event.target.checked = false;
 		showMeetingToast('Live captions are unavailable in this browser. Try Chrome or Edge.', 'error');
@@ -2017,12 +2034,14 @@ $('settings-captions-toggle').addEventListener('change', (event) => {
 		$('captions-button').classList.add('active');
 		$('captions-button').querySelector('strong').textContent = 'Stop captions';
 		startCaptionRecognition(Recognition);
-	} catch {
+	} catch (error) {
 		captionsEnabled = false;
 		event.target.checked = false;
 		$('captions-button').classList.remove('active');
 		$('captions-button').querySelector('strong').textContent = 'Captions';
-		showMeetingToast('Could not start live captions. Check microphone and browser permissions.', 'error');
+		showMeetingToast(error.name === 'NotAllowedError'
+			? 'Allow speech recognition in your browser to use captions.'
+			: 'Could not start live captions. Check microphone and browser permissions.', 'error');
 	}
 });
 $('settings-caption-language').addEventListener('change', (event) => {
@@ -2061,7 +2080,16 @@ $('settings-host-controls').addEventListener('click', () => {
 $('settings-feedback').addEventListener('click', () => {
 	window.location.href = `mailto:?subject=${encodeURIComponent('Gather meeting feedback')}&body=${encodeURIComponent(`Meeting: ${meetingLink()}`)}`;
 });
-$('report-button').addEventListener('click', () => $('report-section').classList.toggle('hidden'));
+$('report-button').addEventListener('click', () => {
+	const reportSection = $('report-section');
+	const isOpening = reportSection.classList.contains('hidden');
+	reportSection.classList.toggle('hidden', !isOpening);
+	$('report-button').setAttribute('aria-expanded', String(isOpening));
+	if (isOpening) {
+		reportSection.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		$('report-text').focus({ preventScroll: true });
+	}
+});
 $('send-report-button').addEventListener('click', () => {
 	const report = $('report-text').value.trim();
 	if (!report) return showMeetingToast('Describe the problem before sending.', 'error');

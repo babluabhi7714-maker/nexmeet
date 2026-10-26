@@ -109,11 +109,11 @@ body { overflow: hidden; }
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
 }
 .settings-group h4 { margin: 0 0 5px; color: var(--muted); font: 700 10px 'Space Grotesk', sans-serif; letter-spacing: .12em; }
-.settings-option { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 52px; color: var(--ink) !important; cursor: pointer; }
+.settings-option { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 52px; color: var(--ink) !important; cursor: pointer; }
 .settings-option span { display: grid; gap: 4px; }
 .settings-option strong { font-size: 13px; }
 .settings-option small { color: var(--muted); font-size: 11px; }
-.settings-option input { position: absolute; opacity: 0; pointer-events: none; }
+.settings-option input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .settings-option i { position: relative; flex: 0 0 38px; width: 38px; height: 22px; border-radius: 20px; background: #cbd3cf; transition: background .18s ease; }
 .settings-option i::after { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; content: ''; box-shadow: 0 1px 3px rgba(23, 33, 38, .25); transition: transform .18s ease; }
 .settings-option input:checked + i { background: #82a735; }
@@ -567,6 +567,27 @@ body { background: var(--paper); }
 .reaction-picker button { display: grid; flex: 0 0 38px; place-items: center; }
 .meeting-screen .controls { position: relative; z-index: 12; min-height: 76px; }
 .meeting-screen .reaction-layer { z-index: 14; }
+.meeting-screen .control-button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    line-height: 1;
+}
+.meeting-screen .control-button > span {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    place-items: center;
+    font-size: 19px;
+    line-height: 1;
+}
+.meeting-screen .control-button > small {
+    min-height: 12px;
+    line-height: 1.2;
+    white-space: nowrap;
+}
 
 .video-grid.active-speaker-mode .video-tile.main-speaker.presentation-tile video,
 .speaker-stage .video-tile.presentation-tile video {
@@ -624,21 +645,34 @@ body { background: var(--paper); }
 .meeting-screen .participant-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    align-items: start;
-    gap: 9px;
+    align-items: stretch;
+    gap: 8px;
     min-height: 0;
-    padding: 11px 12px;
+    padding: 12px;
     border-radius: 12px;
     text-align: left;
 }
-.meeting-screen .participant-row > .participant-name {
+.participant-identity { display: grid; align-content: center; gap: 4px; min-width: 0; }
+.meeting-screen .participant-row .participant-name {
     min-width: 0;
-    overflow: hidden;
-    font-size: 12px;
+    color: #edf2ef;
+    font-size: 13px;
+    font-weight: 700;
     line-height: 1.45;
-    text-overflow: ellipsis;
-    white-space: normal;
     overflow-wrap: anywhere;
+}
+.participant-details {
+    min-width: 0;
+    color: #aeb9b3;
+    font-size: 10px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+.participant-details:empty { display: none; }
+.meeting-screen .participant-row .participant-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .meeting-screen .participant-row > .participant-actions {
     display: grid;
@@ -648,53 +682,106 @@ body { background: var(--paper); }
     min-width: 0;
 }
 .meeting-screen .participant-row .participant-actions button {
+    display: grid;
     min-width: 0;
     min-height: 32px;
+    place-items: center;
     margin: 0;
     padding: 5px 4px;
     border-radius: 8px;
     font-size: 10px;
+    line-height: 1.2;
     white-space: nowrap;
+}
+.meeting-screen .participant-row .participant-actions button:focus-visible {
+    outline: 2px solid #a8df72;
+    outline-offset: 2px;
 }
 
 .utility-panel {
     display: flex;
     flex-direction: column;
+    min-width: 0;
+    max-width: calc(100% - 24px);
     gap: 12px;
     padding: 18px;
 }
+.utility-panel:not(.show-settings) { width: min(380px, calc(100% - 24px)); }
+.more-sheet-header { flex: 0 0 auto; }
+.more-sheet-header > div { min-width: 0; }
+.more-sheet-header .eyebrow { margin-bottom: 5px; }
+.more-sheet-header .icon-button { flex: 0 0 36px; }
+.more-grid {
+    flex: 0 0 auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(88px, auto);
+    align-items: stretch;
+    gap: 10px;
+}
+.more-tile {
+    width: 100%;
+    min-width: 0;
+    min-height: 88px;
+    padding: 12px;
+    border-radius: 12px;
+}
+.more-tile strong { max-width: 100%; overflow-wrap: anywhere; }
+.more-secondary-actions {
+    flex: 0 0 auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 2px 0;
+}
+.more-secondary-actions .compact-button {
+    display: flex;
+    min-width: 0;
+    min-height: 40px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 9px;
+    text-align: center;
+}
+.more-secondary-actions #record-button .more-icon { margin: 0; }
+.more-secondary-actions #record-button small { font-size: 11px; }
+.utility-section { flex: 0 0 auto; min-width: 0; }
 .utility-panel.show-settings {
     min-height: 0;
     max-height: calc(100dvh - 24px);
     overflow: hidden;
     padding: 16px;
 }
+.utility-panel.show-settings { width: min(380px, calc(100% - 24px)); }
 .utility-panel.show-settings .more-sheet-header { display: none; }
 .utility-panel.show-settings .settings-section {
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
     width: 100%;
+    max-width: 100%;
     min-height: 0;
+    min-width: 0;
+    align-items: stretch;
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 0 3px 4px 0;
+    padding: 0 0 4px;
 }
 .utility-panel.show-settings .settings-heading {
     position: sticky;
     top: 0;
     z-index: 3;
     flex: 0 0 auto;
-    margin: 0 -1px 4px;
-    padding: 4px 1px 12px;
+    width: 100%;
+    margin: 0 0 4px;
+    padding: 4px 0 12px;
     background: #171d1b;
 }
 .settings-heading > div:first-child { min-width: 0; }
 .settings-heading .eyebrow { margin-bottom: 5px; }
 .settings-heading-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
-.settings-heading-actions .compact-button { width: auto; min-height: 34px; padding: 6px 9px; white-space: nowrap; }
-.settings-heading-actions .icon-button { flex: 0 0 34px; width: 34px; height: 34px; }
+.settings-heading-actions .icon-button { display: grid; flex: 0 0 38px; width: 38px; height: 38px; place-items: center; }
 .meeting-screen .utility-panel .settings-group {
     width: 100%;
     min-width: 0;
@@ -704,14 +791,35 @@ body { background: var(--paper); }
     border-radius: 12px;
 }
 .settings-group h4 { margin-bottom: 2px; }
-.settings-option { gap: 12px; min-width: 0; }
+.settings-option { gap: 12px; min-width: 0; margin: 0; }
 .settings-option > span { flex: 1 1 auto; min-width: 0; }
 .settings-option strong { line-height: 1.35; }
 .settings-option small { line-height: 1.4; }
-.settings-select-wrap { min-width: 0; gap: 6px; padding-top: 4px; }
+.settings-select-wrap { display: grid; width: 100%; min-width: 0; gap: 6px; padding-top: 4px; }
 .settings-select-wrap label { margin: 0; }
-.meeting-screen .settings-select-wrap select { min-width: 0; min-height: 42px; border-radius: 9px; }
+.meeting-screen .settings-select-wrap select {
+    width: 100%;
+    min-width: 0;
+    min-height: 42px;
+    padding: 9px 11px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 9px;
+    background: #111715;
+    color: #edf2ef;
+    color-scheme: dark;
+    font: inherit;
+    font-size: 12px;
+}
+.meeting-screen .settings-select-wrap select:focus-visible {
+    outline: 2px solid #a8df72;
+    outline-offset: 2px;
+}
 .settings-group .compact-button { justify-self: start; }
+.settings-group > * { min-width: 0; }
+.settings-option input + i { flex: 0 0 38px; }
+.settings-option input:focus-visible + i { outline: 2px solid #a8df72; outline-offset: 3px; }
+.settings-value { align-items: center; }
+.settings-select-wrap select { box-sizing: border-box; }
 
 @media (max-width: 800px) {
     .meeting-body,
@@ -729,7 +837,8 @@ body { background: var(--paper); }
         margin: 0;
         overflow: hidden;
     }
-    .utility-panel { padding: 16px; }
+    .utility-panel,
+    .utility-panel.show-settings { width: auto; max-width: none; padding: 16px; }
     .utility-panel.show-settings { max-height: calc(100dvh - 16px); }
     .meeting-duration { margin-left: 5px; padding: 3px 5px; font-size: 9px; }
     .speaker-layout { grid-template-rows: minmax(0, 1fr) 86px; }
@@ -750,7 +859,10 @@ body { background: var(--paper); }
     .utility-panel { padding: 14px; }
     .utility-panel.show-settings { padding: 12px; }
     .settings-heading h3 { font-size: 20px; }
-    .settings-heading-actions .compact-button { padding: 6px 7px; font-size: 11px; }
+    .more-grid { gap: 8px; }
+    .more-tile,
+    .more-wide-tile { min-height: 78px; padding: 10px; }
+    .more-secondary-actions { gap: 6px; }
 }
 .meeting-screen .settings-heading-actions .secondary-button { background: #202825; border-color: #35413a; color: #edf2ef; }
 .meeting-screen .settings-heading-actions .secondary-button:hover { background: #2a3630; border-color: #506054; }

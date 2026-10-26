@@ -3,7 +3,7 @@ services:
     name: gather-video-meeting
     runtime: node
     plan: free
-    repo: https://github.com/bandaarhaa-sys/meetspace-77.git
+    repo: https://github.com/babluabhi7714-maker/nexmeet.git
     branch: main
     autoDeployTrigger: commit
     rootDir: .
