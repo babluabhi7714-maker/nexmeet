@@ -1518,10 +1518,10 @@ $('share-button').addEventListener('click', async () => {
 	$('share-button').disabled = true;
 	try {
 		screenStream = await getDisplayMedia({
-			preferCurrentTab: true,
+			preferCurrentTab: false,
 			selfBrowserSurface: 'include',
-			surfaceSwitching: 'exclude',
-			monitorTypeSurfaces: 'exclude',
+			surfaceSwitching: 'include',
+			monitorTypeSurfaces: 'include',
 			video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } },
 			audio: true,
 		});
