@@ -2061,11 +2061,14 @@ $('email-invite-button').addEventListener('click', async () => {
 	$('gmail-draft-button').classList.add('hidden');
 	button.disabled = true;
 	button.textContent = 'Sending…';
+	const controller = new AbortController();
+	const requestTimeout = window.setTimeout(() => controller.abort(), 8000);
 	try {
 		const response = await fetch('/api/invite', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ email, roomId: currentRoom }),
+			signal: controller.signal,
 		});
 		const result = await response.json().catch(() => ({}));
 		if (!response.ok) throw new Error(result.error || 'Could not send the email invite.');
@@ -2073,8 +2076,11 @@ $('email-invite-button').addEventListener('click', async () => {
 		showMeetingToast('Meeting invite sent by email.', 'success');
 	} catch (error) {
 		$('gmail-draft-button').classList.remove('hidden');
-		showMeetingToast(error.message || 'Could not send the email invite.', 'error');
+		showMeetingToast(error.name === 'AbortError'
+			? 'Email service timed out. Open the Gmail draft to send your invite.'
+			: error.message || 'Could not send the email invite.', 'error');
 	} finally {
+		window.clearTimeout(requestTimeout);
 		button.disabled = false;
 		button.textContent = 'Send invite';
 	}
