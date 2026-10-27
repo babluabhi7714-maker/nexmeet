@@ -1259,11 +1259,12 @@ socket.on('presentation-denied', ({ name }) => {
 });
 socket.on('presentation-started', ({ id }) => {
 	if (screenStream && id !== socket.id) stopSharing(false);
-	for (const previousId of activePresentations) {
+	for (const tile of videoGrid.querySelectorAll('.video-tile.presentation-tile')) {
+		const previousId = tile.id.slice('tile-presentation-'.length);
 		if (previousId === id) continue;
 		const previousPresentationId = `presentation-${previousId}`;
 		removeRemoteAudio(previousPresentationId);
-		document.getElementById(`tile-${previousPresentationId}`)?.remove();
+		tile.remove();
 		if (pinnedParticipantId === previousPresentationId) pinnedParticipantId = null;
 		if (activeSpeakerId === previousPresentationId) setActiveSpeaker(chooseFallbackSpeaker(previousPresentationId));
 	}
