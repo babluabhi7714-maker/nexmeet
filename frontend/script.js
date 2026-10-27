@@ -1535,9 +1535,7 @@ $('share-button').addEventListener('click', async () => {
 			if (screenVideoSender) await configureScreenShareSender(screenVideoSender);
 			await screenAudioSender?.replaceTrack(sharedAudioTrack || null);
 		}
-		showMeetingToast(sharedAudioTrack
-			? 'Screen shared. Your preview is hidden here to prevent a mirror effect; tab audio is included.'
-			: 'Screen shared. Your preview is hidden here to prevent a mirror effect.');
+		$('presenting-banner').classList.remove('hidden');
 		track.onended = stopSharing;
 		$('share-button').classList.add('active');
 		$('share-button').title = 'Stop presenting';
@@ -1552,6 +1550,7 @@ $('share-button').addEventListener('click', async () => {
 		screenStream?.getTracks().forEach((item) => item.stop());
 		screenStream = null;
 		videoGrid.classList.remove('presentation-mode');
+		$('presenting-banner').classList.add('hidden');
 		showMeetingToast(message, 'error');
 	} finally {
 		screenShareRequestPending = false;
@@ -1576,6 +1575,7 @@ function stopSharing(showToast = true) {
 	}
 	screenStream?.getTracks().forEach((item) => item.stop());
 	screenStream = null;
+	$('presenting-banner').classList.add('hidden');
 	socket.emit('presentation-stop');
 	document.getElementById(`tile-presentation-${socket.id}`)?.remove();
 	pinnedParticipantId = null;
@@ -1592,6 +1592,7 @@ function stopSharing(showToast = true) {
 		socket.emit('participant-role-changed', { id: socket.id, role: 'participant' });
 	}
 }
+$('stop-presenting-button').addEventListener('click', () => stopSharing());
 function showMeetingError(message) {
 	$('meeting-error').textContent = message;
 	window.setTimeout(() => { $('meeting-error').textContent = ''; }, 5000);
