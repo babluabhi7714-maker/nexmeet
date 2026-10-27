@@ -1258,6 +1258,16 @@ socket.on('presentation-denied', ({ name }) => {
 	showMeetingToast(`${name || 'Another participant'} is already presenting. Wait until they stop before sharing.`, 'error');
 });
 socket.on('presentation-started', ({ id }) => {
+	if (screenStream && id !== socket.id) stopSharing(false);
+	for (const previousId of activePresentations) {
+		if (previousId === id) continue;
+		const previousPresentationId = `presentation-${previousId}`;
+		removeRemoteAudio(previousPresentationId);
+		document.getElementById(`tile-${previousPresentationId}`)?.remove();
+		if (pinnedParticipantId === previousPresentationId) pinnedParticipantId = null;
+		if (activeSpeakerId === previousPresentationId) setActiveSpeaker(chooseFallbackSpeaker(previousPresentationId));
+	}
+	activePresentations.clear();
 	activePresentations.add(id);
 	showRemotePresentation(id);
 });
