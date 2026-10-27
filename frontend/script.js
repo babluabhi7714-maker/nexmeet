@@ -1535,15 +1535,9 @@ $('share-button').addEventListener('click', async () => {
 			if (screenVideoSender) await configureScreenShareSender(screenVideoSender);
 			await screenAudioSender?.replaceTrack(sharedAudioTrack || null);
 		}
-		if (sharedAudioTrack) {
-			showMeetingToast('Screen and shared-tab audio are being presented.');
-		} else {
-			showMeetingToast('Screen shared. Select a browser tab and enable Share tab audio to send sound.');
-		}
-		const presentationId = `presentation-${socket.id}`;
-		addVideo(presentationId, `${displayName} screen`, screenStream, true);
-		pinnedParticipantId = presentationId;
-		setActiveSpeaker(presentationId);
+		showMeetingToast(sharedAudioTrack
+			? 'Screen shared. Your preview is hidden here to prevent a mirror effect; tab audio is included.'
+			: 'Screen shared. Your preview is hidden here to prevent a mirror effect.');
 		track.onended = stopSharing;
 		$('share-button').classList.add('active');
 		$('share-button').title = 'Stop presenting';
