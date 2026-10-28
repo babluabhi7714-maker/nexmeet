@@ -561,6 +561,7 @@ function isCameraEnabled() {
 }
 
 function publishMediaState() {
+	updateMediaControlsUI();
 	const audioMuted = localStream?.getAudioTracks()[0]?.enabled === false;
 	const videoMuted = !isCameraEnabled();
 	const participant = participants.get(socket.id);
@@ -1043,13 +1044,16 @@ function syncAudioOutputSelects(selectedValue = '') {
 }
 
 function updateMediaControlsUI() {
+	const micButton = $('mic-button');
 	const micTrack = localStream?.getAudioTracks()[0];
 	const micEnabled = Boolean(micTrack && micTrack.enabled);
 	const cameraIsEnabled = isCameraEnabled();
-	$('mic-button')?.classList.toggle('muted', !micEnabled);
+	micButton?.classList.toggle('muted', !micEnabled);
 	$('settings-mic-toggle') && ($('settings-mic-toggle').checked = micEnabled);
 	const micLabel = document.querySelector('#mic-button small');
 	if (micLabel) micLabel.textContent = micEnabled ? 'Microphone' : 'Unmute';
+	micButton?.setAttribute('aria-label', micEnabled ? 'Mute microphone' : 'Unmute microphone');
+	micButton?.setAttribute('aria-pressed', String(!micEnabled));
 	$('camera-button')?.classList.toggle('muted', !cameraIsEnabled);
 	$('settings-camera-toggle') && ($('settings-camera-toggle').checked = cameraIsEnabled);
 	const cameraLabel = document.querySelector('#camera-button small');

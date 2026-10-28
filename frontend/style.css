@@ -1044,3 +1044,8 @@ body { background: var(--paper); }
     .meeting-screen .control-group-primary { gap: 3px; }
     .meeting-screen .control-button { min-width: 0; min-height: 50px; border-radius: 15px; }
 }
+.meeting-screen .mute-badge { bottom: 48px; left: 12px; z-index: 6; min-width: 32px; min-height: 32px; padding: 6px; border: 1px solid rgba(255, 255, 255, .18); border-radius: 9px; }
+.meeting-screen #mic-button.muted { border-color: rgba(255, 132, 122, .65); background: #612e2c; color: #ffe1de; }
+.meeting-screen #mic-button.muted small { color: #ffe1de; }
+.meeting-screen #mic-button.muted > span { position: relative; }
+.meeting-screen #mic-button.muted > span::after { position: absolute; top: 50%; left: -2px; width: 26px; height: 2px; border-radius: 2px; background: #ffb8b2; content: ''; transform: rotate(-45deg); }
