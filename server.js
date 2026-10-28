@@ -2,7 +2,6 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const express = require('express');
-const nodemailer = require('nodemailer');
 const { Server } = require('socket.io');
 
 const app = express();
@@ -45,10 +44,10 @@ app.post('/api/invite', async (req, res) => {
 		return res.status(400).json({ error: 'Enter a valid email address.' });
 	}
 	if (!roomId) return res.status(400).json({ error: 'The meeting room is missing.' });
-	const gmailUser = String(process.env.GMAIL_USER || '').trim();
-	const gmailAppPassword = String(process.env.GMAIL_APP_PASSWORD || '').replace(/\s/g, '');
-	if (!gmailUser || !gmailAppPassword) {
-		return res.status(503).json({ error: 'Gmail delivery is not configured yet. Add the Gmail settings in Render.' });
+	const resendApiKey = String(process.env.RESEND_API_KEY || '').trim();
+	const resendFromEmail = String(process.env.RESEND_FROM_EMAIL || '').trim();
+	if (!resendApiKey || !resendFromEmail) {
+		return res.status(503).json({ error: 'Email delivery is not configured yet. Add the Resend API key and verified sender in Render.' });
 	}
 	const now = Date.now();
 	for (const [address, timestamps] of inviteAttempts) {
@@ -64,24 +63,28 @@ app.post('/api/invite', async (req, res) => {
 	const safeRoomId = escapeHtml(roomId);
 	const safeMeetingUrl = escapeHtml(meetingUrl);
 	try {
-		const transporter = nodemailer.createTransport({
-			host: 'smtp.gmail.com',
-			port: 465,
-			secure: true,
-			auth: { user: gmailUser, pass: gmailAppPassword },
+		const providerResponse = await fetch('https://api.resend.com/emails', {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${resendApiKey}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				from: resendFromEmail,
+				to: [email],
+				subject: `Invitation to ${roomId.replace(/[\r\n]+/g, ' ')}`,
+				text: `You are invited to ${roomId}. Join the meeting: ${meetingUrl}`,
+				html: `<p>You are invited to <strong>${safeRoomId}</strong>.</p><p><a href="${safeMeetingUrl}">Join the meeting</a></p>`,
+			}),
 		});
-		const safeSubjectRoom = roomId.replace(/[\r\n]+/g, ' ');
-		await transporter.sendMail({
-			from: { name: 'Gather Meetings', address: gmailUser },
-			to: email,
-			subject: `Invitation to ${safeSubjectRoom}`,
-			text: `You are invited to ${safeSubjectRoom}. Join the meeting: ${meetingUrl}`,
-			html: `<p>You are invited to <strong>${safeRoomId}</strong>.</p><p><a href="${safeMeetingUrl}">Join the meeting</a></p>`,
-		});
+		if (!providerResponse.ok) {
+			console.error(`[email-invite] Resend rejected request with status ${providerResponse.status}.`);
+			return res.status(502).json({ error: 'Resend could not send the invite. Check the API key and verified sender.' });
+		}
 		return res.json({ sent: true });
 	} catch (error) {
-		console.error('[email-invite] Gmail SMTP send failed.', error.message);
-		return res.status(502).json({ error: 'Gmail could not send the invite. Check the Gmail app password and try again.' });
+		console.error('[email-invite] Resend request failed.', error.message);
+		return res.status(502).json({ error: 'Email delivery failed. Check the Resend configuration and try again.' });
 	}
 });
 app.get('/api/ice-servers', (req, res) => {
