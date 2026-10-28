@@ -2062,7 +2062,6 @@ $('email-invite-button').addEventListener('click', async () => {
 	const email = $('invite-email').value.trim();
 	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showMeetingToast('Enter a valid email address.', 'error');
 	const button = $('email-invite-button');
-	$('gmail-draft-button').classList.add('hidden');
 	button.disabled = true;
 	button.textContent = 'Sending…';
 	const controller = new AbortController();
@@ -2079,30 +2078,14 @@ $('email-invite-button').addEventListener('click', async () => {
 		$('invite-email').value = '';
 		showMeetingToast('Meeting invite sent by email.', 'success');
 	} catch (error) {
-		$('gmail-draft-button').classList.remove('hidden');
 		showMeetingToast(error.name === 'AbortError'
-			? 'Email service timed out. Open the Gmail draft to send your invite.'
+			? 'Email service timed out. Check that the Render service is running.'
 			: error.message || 'Could not send the email invite.', 'error');
 	} finally {
 		window.clearTimeout(requestTimeout);
 		button.disabled = false;
 		button.textContent = 'Send invite';
 	}
-});
-$('gmail-draft-button').addEventListener('click', () => {
-	const email = $('invite-email').value.trim();
-	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showMeetingToast('Enter a valid email address.', 'error');
-	const subject = `Invitation to ${currentRoom || 'Gather meeting'}`;
-	const body = `You are invited to ${currentRoom || 'the meeting'}. Join here: ${meetingLink()}`;
-	const composeUrl = new URL('https://mail.google.com/mail/');
-	composeUrl.searchParams.set('view', 'cm');
-	composeUrl.searchParams.set('fs', '1');
-	composeUrl.searchParams.set('to', email);
-	composeUrl.searchParams.set('su', subject);
-	composeUrl.searchParams.set('body', body);
-	const draftWindow = window.open(composeUrl.toString(), '_blank');
-	if (draftWindow) draftWindow.opener = null;
-	else showMeetingToast('Allow pop-ups to open the Gmail draft.', 'error');
 });
 $('settings-button').addEventListener('click', () => {
 	openSettingsPanel();
